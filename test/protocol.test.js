@@ -30,6 +30,9 @@ test('demo app uses generic run and event protocol', async () => {
 });
 
 test('challenge tree uses app-owned workspaces and generic runs', async () => {
+  const manifest = await request('/api/apps/challenge-tree');
+  assert.match(manifest.data.entry, /\/apps\/challenge-tree\/dist\/index\.html$/);
+  assert.equal((await fetch(base + manifest.data.entry)).status, 200);
   const created = await request('/api/apps/challenge-tree/resources/workspaces', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ topic: '生成AIの基礎', goal: '仕組みを説明できるようになる' }) });
   assert.equal(created.response.status, 201);
   const workspace = await request(`/api/apps/challenge-tree/resources/workspaces/${created.data.project.id}`);

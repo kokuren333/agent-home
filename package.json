@@ -7,6 +7,8 @@
   "scripts": {
     "start": "node --experimental-sqlite gateway/server.js",
     "dev": "node --experimental-sqlite gateway/server.js",
+    "build:challenge-tree": "npm --prefix apps/challenge-tree run build",
+    "build": "npm run build:challenge-tree",
     "test": "node --experimental-sqlite --test test/*.test.js"
   },
   "engines": { "node": ">=22.5.0" }

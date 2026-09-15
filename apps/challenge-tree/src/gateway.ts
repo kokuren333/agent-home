@@ -1,0 +1,178 @@
+import { GradeResponseSchema, ProposalResponseSchema, ChallengeSchema, NodeCreateSchema, NodeSchema, ResourceSchema } from './schemas'
+import type { Challenge, ConnectorModel, ConnectorStatus, GradeResponse, Proposal } from './types'
+
+export interface ResearchEvidence {
+  searchCalls: number
+  searches: string[]
+  sources: Array<{ title: string; url: string; query?: string }>
+  logs?: string[]
+}
+
+export type GatewayOperation = 'tree_propose' | 'node_expand' | 'node_create' | 'challenge_create' | 'answer_grade'
+
+export class GatewayError extends Error {
+  constructor(message: string, public readonly code = 'connector_error') {
+    super(message)
+    this.name = 'GatewayError'
+  }
+}
+
+export class GatewayClient {
+
+  async status(): Promise<ConnectorStatus> {
+    try {
+      const response = await fetch('/api/health', { headers: { Accept: 'application/json' } })
+      if (!response.ok) throw new GatewayError('Gateway returned an error', 'http_error')
+      const data = await response.json() as { ok?: boolean; backend?: { ok?: boolean; version?: string }; agentSettings?: { model?: string; reasoningEffort?: string } }
+      const backendOk = Boolean(data.backend?.ok)
+      return { connected: Boolean(data.ok), authenticated: backendOk, codexFound: backendOk, appServerRunning: backendOk, modelAvailable: Boolean(data.agentSettings?.model), model: data.agentSettings?.model, reasoningEffort: data.agentSettings?.reasoningEffort || null, codexVersion: data.backend?.version || null, message: backendOk ? 'Gateway is ready.' : 'Agent backend is not ready.' }
+    } catch (error) {
+      return { connected: false, authenticated: false, appServerRunning: false, modelAvailable: false, message: 'Gateway is not reachable.', error: { code: 'offline', message: error instanceof Error ? error.message : 'Gateway is not reachable.' } }
+    }
+  }
+
+  async listModels(): Promise<ConnectorModel[]> {
+    const response = await fetch('/api/settings/agent/models', { headers: { Accept: 'application/json' } })
+    if (!response.ok) throw await this.readError(response, 'Could not load the model list.')
+    const data = await response.json() as { models?: Array<{ id: string; name?: string; defaultReasoningEffort?: string; reasoningEfforts?: string[] }> }
+    return (Array.isArray(data.models) ? data.models : []).map((item) => ({ id: item.id, model: item.id, displayName: item.name || item.id, description: '', defaultReasoningEffort: item.defaultReasoningEffort || null, supportedReasoningEfforts: (item.reasoningEfforts || []).map((reasoningEffort) => ({ reasoningEffort, description: '' })) }))
+  }
+
+  async selectModel(model: string, reasoningEffort?: string): Promise<ConnectorStatus> {
+    const response = await fetch('/api/settings/agent', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ model, ...(reasoningEffort ? { reasoningEffort } : {}) })
+    })
+    if (!response.ok) throw await this.readError(response, 'The selected model could not be applied.')
+    return this.status()
+  }
+
+  async treePropose(input: { topic: string; goal: string; researchMode: 'ja' | 'global'; challengeMode: 'explain' | 'short_answer' | 'true_false'; priorKnowledge: string }, onProgress?: (message: string) => void, onResearch?: (evidence: ResearchEvidence) => void): Promise<Proposal[]> {
+    const parsed = await this.runValidated('tree_propose', input, (value) => ProposalResponseSchema.safeParse(value), onProgress, onResearch)
+    return parsed.proposals as Proposal[]
+  }
+
+  async nodeExpand(input: unknown, onProgress?: (message: string) => void, onResearch?: (evidence: ResearchEvidence) => void): Promise<{ nodes: unknown[]; edges: unknown[]; resources: unknown[]; challenges: unknown[] }> {
+    const data = await this.runValidated<{ nodes: unknown[]; edges: unknown[]; resources: unknown[]; challenges: unknown[] }>('node_expand', input, (value: unknown) => {
+      const item = value as Record<string, unknown>
+      const requestedCount = Number((input as Record<string, unknown>)?.branchCount ?? 3)
+      const expectedCount = Number.isInteger(requestedCount) ? Math.max(1, Math.min(10, requestedCount)) : 3
+      const edges = Array.isArray(item?.edges) ? item.edges : []
+      const validEdges = Array.isArray(item?.edges) && edges.every((edge) => {
+        const value = edge as Record<string, unknown>
+        return typeof value?.from === 'string' && typeof value?.to === 'string' && ['dependency', 'recommended', 'related'].includes(String(value?.type))
+      })
+      const nodes = Array.isArray(item?.nodes) ? item.nodes : []
+      const resources = Array.isArray(item?.resources) ? item.resources : []
+      const challenges = Array.isArray(item?.challenges) ? item.challenges : []
+      const normalizedItem = { ...item, nodes, edges, resources, challenges }
+      return Array.isArray(item?.nodes) && nodes.length === expectedCount && nodes.every((node) => NodeSchema.safeParse(node).success) && validEdges && edges.length === expectedCount && Array.isArray(item?.resources) && resources.every((resource) => ResourceSchema.safeParse(resource).success) && Array.isArray(item?.challenges) && challenges.length === expectedCount && challenges.every((challenge) => ChallengeSchema.safeParse(challenge).success)
+        ? { success: true as const, data: normalizedItem } : { success: false as const, error: 'invalid' }
+    }, onProgress, onResearch)
+    return { nodes: data.nodes as unknown[], edges: data.edges as unknown[], resources: data.resources as unknown[], challenges: data.challenges as unknown[] }
+  }
+
+  async nodeCreate(input: unknown, onProgress?: (message: string) => void, onResearch?: (evidence: ResearchEvidence) => void): Promise<{ node: unknown; resources: unknown[]; challenges: unknown[] }> {
+    const data = await this.runValidated<{ node: unknown; resources: unknown[]; challenges: unknown[] }>('node_create', input, (value: unknown) => {
+      const item = value as Record<string, unknown>
+      const resources = Array.isArray(item?.resources) ? item.resources : []
+      const challenges = Array.isArray(item?.challenges) ? item.challenges : []
+      const node = item?.node
+      return node && NodeCreateSchema.safeParse(node).success && resources.every((resource) => ResourceSchema.safeParse(resource).success) && challenges.length === 1 && challenges.every((challenge) => ChallengeSchema.safeParse(challenge).success)
+        ? { success: true as const, data: { ...item, node, resources, challenges } } : { success: false as const, error: 'invalid' }
+    }, onProgress, onResearch)
+    return { node: data.node, resources: data.resources as unknown[], challenges: data.challenges as unknown[] }
+  }
+
+  async challengeCreate(input: unknown, onProgress?: (message: string) => void, onResearch?: (evidence: ResearchEvidence) => void): Promise<Challenge> {
+    return await this.runValidated('challenge_create', input, (value) => ChallengeSchema.safeParse(value), onProgress, onResearch) as Challenge
+  }
+
+  async answerGrade(input: unknown, onProgress?: (message: string) => void, onResearch?: (evidence: ResearchEvidence) => void): Promise<GradeResponse> {
+    return await this.runValidated('answer_grade', input, (value) => GradeResponseSchema.safeParse(value), onProgress, onResearch) as GradeResponse
+  }
+
+  private async runValidated<T>(operation: GatewayOperation, input: unknown, validator: (value: unknown) => { success: boolean; data?: T }, onProgress?: (message: string) => void, onResearch?: (evidence: ResearchEvidence) => void): Promise<T> {
+    let runResult = await this.run(operation, input, onProgress)
+    let parsed = validator(runResult.data)
+    if (!parsed.success) {
+      const repairInput = input && typeof input === 'object' ? { ...(input as Record<string, unknown>), repair: true } : { input, repair: true }
+      runResult = await this.run(operation, repairInput, onProgress)
+      parsed = validator(runResult.data)
+    }
+    if (!parsed.success || parsed.data === undefined) throw new GatewayError(`${operation.toUpperCase()} returned invalid structured data`, 'invalid_output')
+    onResearch?.(runResult.research)
+    return parsed.data
+  }
+
+  private async run(operation: GatewayOperation, input: unknown, onProgress?: (message: string) => void): Promise<{ data: unknown; research: ResearchEvidence }> {
+    const response = await fetch('/api/apps/challenge-tree/runs', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ operation, payload: input }),
+    }).catch(() => { throw new GatewayError('Gateway is not reachable.', 'offline') })
+    if (!response.ok) throw await this.readError(response, `Gateway request failed (${response.status})`)
+    const body = await response.json() as Record<string, unknown>
+    if ('result' in body) return this.unwrapRunResult(body.result)
+    if (body.id) return this.readRunEvents(String(body.id), onProgress)
+    throw new GatewayError('Gateway returned no run', 'invalid_response')
+  }
+
+  private async readError(response: Response, fallback: string): Promise<GatewayError> {
+    let message = fallback
+    try {
+      const body = await response.json() as { error?: { message?: string } }
+      if (body.error?.message) message = body.error.message
+    } catch {
+      // Keep the local fallback when the connector response is not JSON.
+    }
+    return new GatewayError(message, response.status === 401 ? 'unauthorized' : 'http_error')
+  }
+
+  private unwrapRunResult(value: unknown): { data: unknown; research: ResearchEvidence } {
+    if (value && typeof value === 'object' && !Array.isArray(value) && 'data' in value) {
+      const envelope = value as { data?: unknown; research?: ResearchEvidence }
+      return { data: envelope.data, research: envelope.research || { searchCalls: 0, searches: [], sources: [], logs: [] } }
+    }
+    return { data: value, research: { searchCalls: 0, searches: [], sources: [], logs: [] } }
+  }
+
+  private async readRunEvents(runId: string, onProgress?: (message: string) => void): Promise<{ data: unknown; research: ResearchEvidence }> {
+    const response = await fetch(`/api/runs/${encodeURIComponent(runId)}/events`, { headers: { Accept: 'text/event-stream' } }).catch(() => { throw new GatewayError('Could not read Gateway run events.', 'stream_error') })
+    if (!response.ok || !response.body) throw new GatewayError('Gateway event stream failed.', 'stream_error')
+    let result: unknown = undefined
+    let sawEvent = false
+    let buffer = ''
+    const processBlock = (block: string) => {
+      const eventName = block.match(/^event:\s*(.+)$/m)?.[1]
+      const dataLine = block.match(/^data:\s*(.+)$/m)?.[1]
+      if (!eventName || !dataLine) return
+      sawEvent = true
+      try {
+        const data = JSON.parse(dataLine) as Record<string, unknown>
+        if (eventName === 'progress' && typeof data.message === 'string') onProgress?.(data.message)
+        if (eventName === 'result.completed') result = data.result
+        if (eventName === 'run.failed') throw new GatewayError(String(data.message ?? 'Agent operation failed.'), typeof data.code === 'string' ? data.code : 'run_error')
+        if (eventName === 'run.cancelled') throw new GatewayError('Agent operation was cancelled.', 'run_cancelled')
+      } catch (error) {
+        if (error instanceof GatewayError) throw error
+        throw new GatewayError('Gateway returned malformed event data.', 'invalid_output')
+      }
+    }
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    while (true) {
+      const chunk = await reader.read()
+      if (chunk.done) break
+      buffer += decoder.decode(chunk.value, { stream: true })
+      const blocks = buffer.split(/\r?\n\r?\n/)
+      buffer = blocks.pop() || ''
+      for (const block of blocks) processBlock(block)
+    }
+    buffer += decoder.decode()
+    if (buffer.trim()) processBlock(buffer)
+    if (!sawEvent) throw new GatewayError('Gateway returned an empty event stream.', 'empty_stream')
+    if (result === undefined) throw new GatewayError('Gateway completed without a result.', 'empty_result')
+    return this.unwrapRunResult(result)
+  }
+}

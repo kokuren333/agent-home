@@ -20,7 +20,7 @@ Every app has `apps/<directory>/manifest.json`:
 }
 ```
 
-Required fields are `id`, `name`, `description`, `version`, `icon`, `entry`, and `capabilities`. `id` is the stable URL-safe identifier. `icon` is either a short fallback emoji or a same-origin raster image URL; new apps should use a square PNG under their own `ui/assets/` directory. The Launcher list is generated only from these manifests.
+Required fields are `id`, `name`, `description`, `version`, `icon`, `entry`, and `capabilities`. `id` is the stable URL-safe identifier. `icon` is either a short fallback emoji or a same-origin image URL. The Launcher list is generated only from these manifests. Challenge Tree is built from its cloned React source into `apps/challenge-tree/dist/`; its manifest points to that generated entry while its protocol adapter remains in the app directory.
 
 ## Capabilities
 
@@ -65,7 +65,7 @@ interface Artifact {
 interface Error { code: string; message: string; details?: unknown; }
 ```
 
-The initial event types are `run.started`, `message.delta`, `message.completed`, `run.completed`, `run.failed`, `run.cancelled`, and `artifact.created`. `data` is typed by the emitting app. Apps may add event types without changing the common run model.
+The initial event types are `run.started`, `progress`, `message.delta`, `message.completed`, `result.completed`, `run.completed`, `run.failed`, `run.cancelled`, and `artifact.created`. `data` is typed by the emitting app. Apps may add event types without changing the common run model.
 
 ## Gateway-wide Agent settings
 

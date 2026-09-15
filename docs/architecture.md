@@ -4,6 +4,8 @@
 
 `agent-home` is a small, single-process personal agent launcher intended for an always-on low-spec PC. A Tailscale HTTPS reverse proxy can expose the single HTTP port to a phone. The server has no local LLM, vector database, Redis, Postgres, or other resident service dependency.
 
+Challenge Tree integration is based on the upstream repository [`kokuren333/ChallengeTree`](https://github.com/kokuren333/ChallengeTree). The upstream React/Vite application is kept as the app source; only its browser persistence and local Connector transport are adapted to agent-home boundaries.
+
 ## Boundaries
 
 ```text
@@ -19,7 +21,7 @@ phone browser / PWA
                                       +-- mock (development)
                                       +-- Codex CLI adapter
 
-apps/*/manifest.json + runtime.js + ui/
+apps/*/manifest.json + runtime.js + app UI source/build
 ```
 
 - `launcher/`: installable PWA shell, app cards, server state. It knows only manifests and entry URLs.
@@ -41,7 +43,7 @@ agent-home/
 ├─ apps/
 │  ├─ character-chat/         # app manifest, runtime, schema, prompts, and UI
 │  ├─ demo-app/               # protocol-only smoke-test app
-│  └─ challenge-tree/         # learning tree app using the same protocol
+│  └─ challenge-tree/         # cloned source adapted to the same protocol
 ├─ data/                      # runtime database and generated user assets
 ├─ docs/                      # architecture and protocol documentation
 ├─ test/                      # protocol/integration tests
@@ -56,7 +58,7 @@ Browser screenshots and temporary Chrome profiles are verification artifacts, no
 2. Launcher calls `GET /api/apps` and renders every returned manifest, including apps it does not know about.
 3. An app starts a generic run with `POST /api/apps/:id/runs`.
 4. Gateway creates a run, invokes the app runtime with an abstract `AgentBackend`, stores events, and publishes them through `GET /api/runs/:id/events` using SSE.
-5. App-specific resources use the delegated namespace ` /api/apps/:id/resources/*`; their schemas remain inside the app.
+5. App-specific resources use the delegated namespace `/api/apps/:id/resources/*`; their schemas remain inside the app.
 
 The Launcher also provides the common model settings screen at `/api/settings/agent`. The Gateway stores these settings in SQLite and creates a per-run Backend view with the selected model and reasoning effort, so app runtimes remain provider-agnostic.
 
@@ -65,6 +67,7 @@ The Launcher also provides the common model settings screen at `/api/settings/ag
 - Launcher does not contain an app ID switch or Character Chat schema. It renders the manifests returned by `GET /api/apps` and links to each manifest's `entry`.
 - Gateway does not contain Character Chat routes. It dynamically discovers `apps/*/manifest.json`, delegates app resources to the matching runtime, and owns only the common run/event/settings protocol.
 - Character Chat owns its tables, resource paths, prompts, memory rules, and screen under `apps/character-chat/`.
+- Challenge Tree owns its learning domain, Zod schemas, core learning logic, React screens, and SQLite resources under `apps/challenge-tree/`. Its original IndexedDB and Connector transport are replaced by `src/db.ts` and `src/gateway.ts`; no learning-domain UI was reimplemented in Launcher or Gateway.
 - `gateway/imagegen.js` is an infrastructure adapter. It exposes an image-generation boundary to apps and keeps Codex CLI invocation out of app code; it must remain app-neutral if more image-capable apps are added.
 
 ## Resource-light operations
@@ -73,4 +76,4 @@ SQLite uses WAL mode. Runs and events are durable; active in-memory controllers 
 
 ## Adding a second app
 
-Create a directory under `apps/` with `manifest.json`, `runtime.js` exporting `createApp()`, and an entry UI. Restart Gateway. No launcher code or app-specific Gateway branch is required. `apps/demo-app` is the protocol smoke-test example and `apps/challenge-tree` is a larger app using app-owned SQLite resources.
+Create a directory under `apps/` with `manifest.json`, `runtime.js` exporting `createApp()`, and an entry UI. Restart Gateway. No launcher code or app-specific Gateway branch is required. `apps/demo-app` is the protocol smoke-test example and `apps/challenge-tree` is a larger app using app-owned SQLite resources. Challenge Tree source is built with `npm run build:challenge-tree`; Gateway serves its generated `dist/` entry.

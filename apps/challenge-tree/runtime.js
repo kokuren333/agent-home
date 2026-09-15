@@ -1,70 +1,75 @@
 import { randomUUID } from 'node:crypto';
 
-const OPERATIONS = new Set(['tree_propose', 'node_expand', 'challenge_create', 'answer_grade']);
+const OPERATIONS = new Set(['tree_propose', 'node_expand', 'node_create', 'challenge_create', 'answer_grade']);
+const iso = () => new Date().toISOString();
 
 export function createApp({ db }) {
   db.exec(`
-    CREATE TABLE IF NOT EXISTS challenge_tree_workspaces (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      topic TEXT NOT NULL,
-      data_json TEXT NOT NULL,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
-    );
+    CREATE TABLE IF NOT EXISTS challenge_tree_workspaces (id TEXT PRIMARY KEY, title TEXT NOT NULL, topic TEXT NOT NULL, data_json TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
     CREATE INDEX IF NOT EXISTS challenge_tree_workspaces_updated_idx ON challenge_tree_workspaces(updated_at);
+    CREATE TABLE IF NOT EXISTS challenge_tree_settings (id INTEGER PRIMARY KEY CHECK (id = 1), data_json TEXT NOT NULL, updated_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS challenge_tree_snapshots (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, reason TEXT NOT NULL, data_json TEXT NOT NULL, created_at INTEGER NOT NULL);
+    CREATE INDEX IF NOT EXISTS challenge_tree_snapshots_project_idx ON challenge_tree_snapshots(project_id, created_at DESC);
   `);
 
-  const now = () => Date.now();
-  const readWorkspace = (row) => row && JSON.parse(row.data_json);
-  const getWorkspace = (id) => readWorkspace(db.prepare('SELECT data_json FROM challenge_tree_workspaces WHERE id=?').get(id));
-  const listWorkspaceRows = () => db.prepare('SELECT id, title, topic, created_at, updated_at FROM challenge_tree_workspaces ORDER BY updated_at DESC').all();
+  const defaultSettings = { uiLanguage: 'ja', connectorUrl: 'http://127.0.0.1:43110', reducedMotion: false, model: 'gpt-5.6-luna', reasoningEffort: 'low' };
+  const read = (row) => row ? JSON.parse(row.data_json) : undefined;
+  const getWorkspace = (id) => read(db.prepare('SELECT data_json FROM challenge_tree_workspaces WHERE id=?').get(id));
+  const workspaceRows = () => db.prepare('SELECT id, title, topic, created_at, updated_at FROM challenge_tree_workspaces ORDER BY updated_at DESC').all();
+  const getSettings = () => { const row = db.prepare('SELECT data_json FROM challenge_tree_settings WHERE id=1').get(); return row ? { ...defaultSettings, ...JSON.parse(row.data_json) } : defaultSettings; };
+  if (!db.prepare('SELECT id FROM challenge_tree_settings WHERE id=1').get()) db.prepare('INSERT INTO challenge_tree_settings VALUES (1, ?, ?)').run(JSON.stringify(defaultSettings), Date.now());
+
+  function saveWorkspace(workspace, id = workspace.project.id) {
+    const stamp = Date.now();
+    const next = { ...workspace, project: { ...workspace.project, id, updatedAt: new Date(stamp).toISOString() } };
+    const existing = db.prepare('SELECT id FROM challenge_tree_workspaces WHERE id=?').get(id);
+    if (existing) db.prepare('UPDATE challenge_tree_workspaces SET title=?, topic=?, data_json=?, updated_at=? WHERE id=?').run(next.project.title, next.project.topic, JSON.stringify(next), stamp, id);
+    else db.prepare('INSERT INTO challenge_tree_workspaces VALUES (?, ?, ?, ?, ?, ?)').run(id, next.project.title, next.project.topic, JSON.stringify(next), stamp, stamp);
+    return next;
+  }
 
   function createWorkspace(body = {}) {
     const topic = String(body.topic || '').trim();
     if (!topic) return null;
-    const stamp = now();
-    const id = randomUUID();
-    const title = String(body.title || topic).trim() || topic;
-    const rootId = `root-${randomUUID()}`;
+    const stamp = Date.now(); const projectId = randomUUID(); const rootId = `root-${randomUUID()}`;
+    const root = node(rootId, topic, 'The central idea of this learning tree.', String(body.goal || `${topic}を説明できるようになる。`), { x: 110, y: 270 });
     const workspace = {
-      formatVersion: 1,
-      appVersion: '0.1.0',
-      project: { id, title, topic, goal: String(body.goal || `Understand ${topic}`).trim(), researchMode: body.researchMode === 'ja' ? 'ja' : 'global', challengeMode: body.challengeMode || 'explain', createdAt: new Date(stamp).toISOString(), updatedAt: new Date(stamp).toISOString() },
-      tree: { rootNodeId: rootId, nodes: { [rootId]: { id: rootId, title: topic, description: '学習の中心となるテーマ', goal: String(body.goal || `Understand ${topic}`).trim(), status: 'unlocked', xp: 0, masteryState: 'familiar', prerequisites: [], children: [], resourceIds: [], challengeIds: [], position: { x: 0, y: 0 }, createdAt: new Date(stamp).toISOString(), updatedAt: new Date(stamp).toISOString() } }, edges: [] },
-      challenges: [], attempts: [], resources: [], research: [], stats: { totalXp: 0, totalChallenges: 0, sessionXp: 0, gradeDistribution: [0, 0, 0, 0] }, draftAnswers: {}
+      formatVersion: 1, appVersion: '0.1.0', schemaVersion: 1, connectorProtocolVersion: 'agent-home-gateway-v1',
+      project: { id: projectId, title: String(body.title || topic), topic, goal: String(body.goal || `${topic}を説明できるようになる。`), researchMode: body.researchMode === 'ja' ? 'ja' : 'global', challengeMode: ['explain', 'short_answer', 'true_false'].includes(body.challengeMode) ? body.challengeMode : 'explain', createdAt: new Date(stamp).toISOString(), updatedAt: new Date(stamp).toISOString() },
+      tree: { rootNodeId: rootId, nodes: { [rootId]: root }, edges: [] }, challenges: [], attempts: [], resources: [], research: [], settings: getSettings(),
+      stats: { totalXp: 0, totalChallenges: 0, gradeDistribution: [0, 0, 0, 0], sessionXp: 0 }, draftAnswers: {},
     };
-    db.prepare('INSERT INTO challenge_tree_workspaces VALUES (?, ?, ?, ?, ?, ?)').run(id, title, topic, JSON.stringify(workspace), stamp, stamp);
-    return workspace;
+    return saveWorkspace(workspace, projectId);
   }
 
-  function saveWorkspace(workspace) {
-    const stamp = now();
-    const next = { ...workspace, project: { ...workspace.project, updatedAt: new Date(stamp).toISOString() } };
-    db.prepare('UPDATE challenge_tree_workspaces SET title=?, topic=?, data_json=?, updated_at=? WHERE id=?').run(next.project.title, next.project.topic, JSON.stringify(next), stamp, next.project.id);
-    return next;
+  function node(id, title, description, goal, position = { x: 0, y: 0 }) {
+    return { id, title, description, goal, status: 'unlocked', xp: 0, masteryState: 'familiar', prerequisites: [], children: [], resourceIds: [], challengeIds: [], position, createdAt: iso(), updatedAt: iso() };
   }
-
-  function makeNode(id, title, description, goal, prerequisites = []) {
-    return { id, title, description, goal, status: prerequisites.length ? 'unlocked' : 'unlocked', xp: 0, masteryState: 'familiar', prerequisites, children: [], resourceIds: [], challengeIds: [], position: { x: 0, y: 0 }, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+  function challenge(id, nodeId, prompt, mode = 'explain') {
+    return { id, nodeId, promptStyle: 'why', difficulty: 1, prompt, expectedConcepts: ['中心概念', '理由', '具体例'], modelAnswer: `${prompt} 要点と理由を、自分の言葉で説明します。`, explanation: '要点だけでなく、なぜそうなるかまで確認します。', rubric: [{ criterion: '中心概念を説明する', required: true }], commonMisconceptions: [], resourceIds: [], createdAt: iso(), mode, questions: [{ id: `${id}-q1`, prompt, modelAnswer: '中心概念と理由を説明する。', expectedConcepts: ['中心概念'], explanation: '中心概念が説明できているか確認します。' }] };
   }
-  function makeChallenge(id, nodeId, prompt, mode = 'explain') {
-    return { id, nodeId, promptStyle: 'why', difficulty: 1, prompt, expectedConcepts: [], modelAnswer: '', explanation: '', rubric: [], commonMisconceptions: [], resourceIds: [], createdAt: new Date().toISOString(), mode, questions: [{ id: `${id}-main`, prompt, modelAnswer: '', expectedConcepts: [], explanation: '' }] };
-  }
+  function resource(id, title, url, supports = []) { return { id, title, url, language: 'ja', type: 'article', authorityTier: 'B', guidance: '概要と一次情報を確認してください。', supports, verifiedAt: iso() }; }
 
   function mockResult(operation, input) {
-    const topic = input.workspace?.project?.topic || input.topic || 'テーマ';
-    if (operation === 'answer_grade') return { grade: 'B', summary: '要点を押さえています。もう一段、理由や具体例を加えると理解が深まります。', correct: ['中心となる概念に触れている'], missing: ['具体例または背景'], misconceptions: [], nuance: [], recommendedAction: 'deepen', recommendedNodeIds: [], nextStep: '具体例を一つ追加して説明してみてください。' };
-    if (operation === 'challenge_create') return makeChallenge(`challenge-${randomUUID()}`, input.node?.id || 'node', `${topic}について、中心となる考え方を自分の言葉で説明してください。`);
+    const topic = String(input.topic || input.workspace?.project?.topic || '学習テーマ');
+    if (operation === 'answer_grade') return { grade: 'B', summary: '要点を押さえています。理由や具体例を一つ加えると、さらに理解が明確になります。', correct: ['中心となる概念に触れている'], missing: ['理由または具体例'], misconceptions: [], nuance: [], recommendedAction: 'deepen', recommendedNodeIds: [], nextStep: '具体例を一つ加えて説明してみてください。' };
+    if (operation === 'challenge_create') return challenge(`challenge-${randomUUID()}`, input.node?.id || 'node', `${topic}の中心的な考え方を、自分の言葉で説明してください。`, input.challengeMode || 'explain');
+    if (operation === 'node_create') {
+      const created = node(`node-${randomUUID()}`, String(input.title || topic), `${topic}を整理するための学習ノードです。`, String(input.goal || `${topic}を説明できるようになる。`));
+      const item = challenge(`challenge-${randomUUID()}`, created.id, `${created.title}について、重要な点を説明してください。`, input.challengeMode || 'explain');
+      return { node: { id: created.id, title: created.title, description: created.description, goal: created.goal }, resources: [resource(`resource-${randomUUID()}`, `${topic}の参考資料`, 'https://developer.mozilla.org/', [created.id])], challenges: [item] };
+    }
+    if (operation === 'tree_propose') {
+      return { proposals: [0, 1, 2].map((index) => {
+        const root = node(`node-${randomUUID()}`, `${topic}：${['基礎から理解する', '仕組みから掘り下げる', '実践から身につける'][index]}`, `${topic}を${['基本概念', '構造', '実例'][index]}の観点から整理します。`, `${topic}の重要な考え方を説明できる。`, { x: 70, y: 270 });
+        return { id: `proposal-${randomUUID()}`, title: `${topic}：${['基礎から理解する', '仕組みから掘り下げる', '実践から身につける'][index]}`, philosophy: ['まず全体像をつかみ、段階的に深める構成です。', '内部の関係を追いながら理解する構成です。', '手を動かして具体例から一般化する構成です。'][index], learnerProfile: '全体像を整理しながら自分の言葉で理解したい人。', branches: ['基本概念', '仕組み', '応用'], advantages: ['順序が明確', '復習しやすい'], tradeoffs: '最初から細部まで扱う構成ではありません。', root, initialNodes: [root], initialEdges: [], resources: [], challenges: [challenge(`challenge-${randomUUID()}`, root.id, `${topic}の中心的な考え方を説明してください.`)] };
+      }) };
+    }
     const parent = input.node?.id || input.workspace?.tree?.rootNodeId || 'root';
-    const labels = operation === 'tree_propose' ? ['基本概念', '仕組み', '実践と応用'] : ['関連する概念', '具体例', '発展的な論点'];
-    const nodes = labels.map((label) => {
-      const node = makeNode(`node-${randomUUID()}`, `${topic}：${label}`, `${topic}を${label}の観点から整理します。`, `${topic}の${label}を説明できるようになる。`, [parent]);
-      const challenge = makeChallenge(`challenge-${randomUUID()}`, node.id, `${topic}の${label}について、重要な点を説明してください.`);
-      node.challengeIds = [challenge.id];
-      return { node, challenge };
-    });
-    return { nodes: nodes.map((item) => item.node), edges: nodes.map((item) => ({ from: parent, to: item.node.id, type: 'recommended' })), challenges: nodes.map((item) => item.challenge), resources: [] };
+    const count = Math.max(1, Math.min(10, Number(input.branchCount) || 3));
+    const labels = ['関連する概念', '具体例', '発展的な論点', '比較対象', '実践上の判断'];
+    const items = Array.from({ length: count }, (_, index) => { const child = node(`node-${randomUUID()}`, `${topic}：${labels[index % labels.length]}`, `${topic}を${labels[index % labels.length]}の観点から整理します。`, `${topic}の${labels[index % labels.length]}を説明できる。`); const item = challenge(`challenge-${randomUUID()}`, child.id, `${child.title}について重要な点を説明してください。`, input.challengeMode || 'explain'); child.challengeIds = [item.id]; child.prerequisites = [parent]; return { child, item }; });
+    return { nodes: items.map(({ child }) => child), edges: items.map(({ child }) => ({ from: parent, to: child.id, type: 'recommended' })), challenges: items.map(({ item }) => item), resources: [] };
   }
 
   function extractJson(text) {
@@ -74,40 +79,47 @@ export function createApp({ db }) {
     if (start >= 0 && end > start) { try { return JSON.parse(value.slice(start, end + 1)); } catch {} }
     throw new Error('Codexの結果をJSONとして解釈できませんでした');
   }
-
   function promptFor(operation, input) {
-    const base = 'あなたは適応型学習アプリの生成エンジンです。入力された学習データを尊重し、指定されたJSONだけを返してください。Markdown、前置き、コードフェンスは不要です。';
-    if (operation === 'answer_grade') return `${base}\n回答を採点してください。gradeはC/B/A/Sのいずれか、summary/correct/missing/misconceptions/nuanceは短い日本語配列、recommendedActionはretry/deepen/repair/branchのいずれか、recommendedNodeIdsは配列、nextStepは短文です。\nJSON schema: {"grade":"B","summary":"","correct":[],"missing":[],"misconceptions":[],"nuance":[],"recommendedAction":"deepen","recommendedNodeIds":[],"nextStep":""}\n問題:\n${JSON.stringify(input.challenge)}\n回答:\n${String(input.answer || '')}`;
-    if (operation === 'challenge_create') return `${base}\n1問の学習問題を作ってください。JSON schema: {"id":"challenge-id","nodeId":"${input.node?.id || 'node-id'}","promptStyle":"why","difficulty":1,"prompt":"","expectedConcepts":[],"modelAnswer":"","explanation":"","rubric":[],"commonMisconceptions":[],"resourceIds":[],"createdAt":"${new Date().toISOString()}"}\nテーマ:\n${JSON.stringify(input.workspace?.project || input.topic)}\nノード:\n${JSON.stringify(input.node)}`;
-    return `${base}\n${operation === 'tree_propose' ? 'テーマから最初の学習ツリーを作り、3つの子ノードと各ノードの問題を生成してください。' : '指定ノードから、次に学ぶ3つの子ノードと各ノードの問題を生成してください。'}\nJSON schema: {"nodes":[{"id":"node-id","title":"","description":"","goal":"","status":"unlocked","xp":0,"masteryState":"familiar","prerequisites":[],"children":[],"resourceIds":[],"challengeIds":[],"position":{"x":0,"y":0},"createdAt":"","updatedAt":""}],"edges":[{"from":"","to":"","type":"recommended"}],"challenges":[{"id":"challenge-id","nodeId":"","promptStyle":"why","difficulty":1,"prompt":"","expectedConcepts":[],"modelAnswer":"","explanation":"","rubric":[],"commonMisconceptions":[],"resourceIds":[],"createdAt":""}],"resources":[]}\n学習データ:\n${JSON.stringify(input.workspace || input)}`;
+    const base = 'あなたはChallenge Treeの学習データ生成エンジンです。入力を尊重し、指定されたJSONだけを返してください。Markdownやコードフェンスは不要です。日本語で出力してください。';
+    if (operation === 'answer_grade') return `${base}\n回答を採点してください。gradeはC/B/A/S、recommendedActionはretry/deepen/repair/branchです。JSON: {"grade":"B","summary":"","correct":[],"missing":[],"misconceptions":[],"nuance":[],"recommendedAction":"deepen","recommendedNodeIds":[],"nextStep":""}\n問題:${JSON.stringify(input.challenge)}\n回答:${String(input.answer || '')}`;
+    if (operation === 'challenge_create') return `${base}\n次のノードについて1問作成してください。JSON: {"id":"challenge-id","nodeId":"${input.node?.id || 'node-id'}","promptStyle":"why","difficulty":1,"prompt":"","expectedConcepts":[],"modelAnswer":"","explanation":"","rubric":[],"commonMisconceptions":[],"resourceIds":[],"createdAt":"${iso()}"}\n${JSON.stringify(input)}`;
+    if (operation === 'node_create') return `${base}\n新しい学習ノードと問題を1つ作成してください。JSON: {"node":{"id":"node-id","title":"","description":"","goal":""},"resources":[],"challenges":[{"id":"challenge-id","nodeId":"node-id","promptStyle":"why","difficulty":1,"prompt":"","expectedConcepts":[],"modelAnswer":"","explanation":"","rubric":[],"commonMisconceptions":[],"resourceIds":[],"createdAt":"${iso()}"}]}\n${JSON.stringify(input)}`;
+    if (operation === 'tree_propose') return `${base}\n学習ツリーの入口を3案作ってください。各案はrootとinitialNodesを含め、initialNodesには完全なNode形式を1つ入れてください。JSON: {"proposals":[{"id":"proposal-id","title":"","philosophy":"","learnerProfile":"","branches":[],"advantages":[],"tradeoffs":"","root":{},"initialNodes":[],"initialEdges":[],"resources":[],"challenges":[]}]}\n${JSON.stringify(input)}`;
+    return `${base}\n指定ノードから${Number(input.branchCount) || 3}個の子ノードを作成してください。JSON: {"nodes":[],"edges":[],"resources":[],"challenges":[]}。nodesとedgesとchallengesは同じ個数にしてください。${JSON.stringify(input)}`;
   }
 
   async function run(input, { backend, signal, emit }) {
-    const operation = String(input?.operation || '').toLowerCase();
+    const operation = String(input?.operation || '').toLowerCase(); const payload = input?.payload && typeof input.payload === 'object' ? input.payload : input;
     if (!OPERATIONS.has(operation)) throw new Error('Challenge Tree operation is not supported');
-    if (operation !== 'answer_grade' && !getWorkspace(input.workspaceId || input.workspace?.project?.id)) throw new Error('Workspace not found');
+    if (operation !== 'tree_propose' && operation !== 'node_create' && operation !== 'answer_grade' && payload.workspaceId && !getWorkspace(payload.workspaceId)) throw new Error('Workspace not found');
     emit('progress', { operation, message: '生成しています…' });
-    let result;
-    if (backend.name === 'mock') result = mockResult(operation, input);
-    else {
-      let output = '';
-      for await (const delta of backend.stream(promptFor(operation, input), { signal })) { output += delta; emit('message.delta', { operation, text: delta }); }
-      if (signal.aborted) return;
-      result = extractJson(output);
-    }
-    emit('result.completed', { operation, result });
+    let result = backend.name === 'mock' ? mockResult(operation, payload) : null;
+    if (backend.name !== 'mock') { let output = ''; for await (const delta of backend.stream(promptFor(operation, payload), { signal })) { output += delta; emit('message.delta', { operation, text: delta }); } if (signal.aborted) return; result = extractJson(output); }
+    emit('result.completed', { operation, result, research: { searchCalls: 0, searches: [], sources: [], logs: [] } });
   }
 
   async function resources({ method, path, body }) {
-    const parts = path.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean);
-    const [resource, id] = parts;
-    if (resource !== 'workspaces') return { status: 404, data: { error: { code: 'not_found', message: 'Workspace resource not found' } } };
-    if (method === 'GET' && !id) return { status: 200, data: listWorkspaceRows().map((row) => ({ id: row.id, title: row.title, topic: row.topic, createdAt: row.created_at, updatedAt: row.updated_at })) };
-    if (method === 'POST' && !id) { const workspace = createWorkspace(body); return workspace ? { status: 201, data: workspace } : { status: 400, data: { error: { code: 'invalid_input', message: 'topic is required' } } }; }
+    const parts = path.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean); const [resourceName, id, subresource] = parts;
+    if (resourceName === 'settings') {
+      if (method === 'GET') return { status: 200, data: getSettings() };
+      if (method === 'PUT') { const next = { ...getSettings(), ...(body || {}) }; db.prepare('UPDATE challenge_tree_settings SET data_json=?, updated_at=? WHERE id=1').run(JSON.stringify(next), Date.now()); return { status: 200, data: next }; }
+    }
+    if (resourceName !== 'workspaces') return { status: 404, data: { error: { code: 'not_found', message: 'Challenge Tree resource not found' } } };
+    if (method === 'GET' && !id) return { status: 200, data: workspaceRows().map((row) => getWorkspace(row.id)).filter(Boolean) };
+    if (method === 'POST' && !id) { if (subresource) return { status: 405, data: { error: { code: 'method_not_allowed', message: 'Method not allowed' } } }; const created = body?.project ? saveWorkspace(body) : createWorkspace(body); return created ? { status: 201, data: created } : { status: 400, data: { error: { code: 'invalid_input', message: 'topic is required' } } }; }
     if (!id) return { status: 404, data: { error: { code: 'not_found', message: 'Workspace not found' } } };
-    if (method === 'GET') { const workspace = getWorkspace(id); return workspace ? { status: 200, data: workspace } : { status: 404, data: { error: { code: 'not_found', message: 'Workspace not found' } } }; }
-    if (method === 'PUT') { const current = getWorkspace(id); return current ? { status: 200, data: saveWorkspace({ ...body, project: { ...body.project, id } }) } : { status: 404, data: { error: { code: 'not_found', message: 'Workspace not found' } } }; }
-    if (method === 'DELETE') { db.prepare('DELETE FROM challenge_tree_workspaces WHERE id=?').run(id); return { status: 204, data: null }; }
+    if (subresource === 'snapshots') {
+      if (method !== 'POST') return { status: 405, data: { error: { code: 'method_not_allowed', message: 'Method not allowed' } } };
+      const workspace = getWorkspace(id); if (!workspace) return { status: 404, data: { error: { code: 'not_found', message: 'Workspace not found' } } };
+      const snapshot = { id: `${id}:${Date.now()}:${randomUUID()}`, projectId: id, reason: String(body?.reason || 'manual'), createdAt: iso(), workspace: body?.workspace || workspace };
+      db.prepare('INSERT INTO challenge_tree_snapshots VALUES (?, ?, ?, ?, ?)').run(snapshot.id, id, snapshot.reason, JSON.stringify(snapshot.workspace), Date.now());
+      const old = db.prepare('SELECT id FROM challenge_tree_snapshots WHERE project_id=? ORDER BY created_at DESC').all(id).slice(3); for (const row of old) db.prepare('DELETE FROM challenge_tree_snapshots WHERE id=?').run(row.id);
+      return { status: 201, data: snapshot };
+    }
+    const workspace = getWorkspace(id);
+    if (method === 'GET') return workspace ? { status: 200, data: workspace } : { status: 404, data: { error: { code: 'not_found', message: 'Workspace not found' } } };
+    if (method === 'PUT') return workspace ? { status: 200, data: saveWorkspace(body, id) } : { status: 404, data: { error: { code: 'not_found', message: 'Workspace not found' } } };
+    if (method === 'DELETE') { db.prepare('DELETE FROM challenge_tree_snapshots WHERE project_id=?').run(id); db.prepare('DELETE FROM challenge_tree_workspaces WHERE id=?').run(id); return { status: 204, data: null }; }
     return { status: 405, data: { error: { code: 'method_not_allowed', message: 'Method not allowed' } } };
   }
 
