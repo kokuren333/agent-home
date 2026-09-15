@@ -16,8 +16,9 @@ before(async () => {
 after(async () => { if (child && child.exitCode === null) { const exited = new Promise((resolve) => child.once('exit', resolve)); child.kill(); await exited; } await rm(temp, { recursive: true, force: true }); });
 
 test('discovers apps from manifests, including the protocol-only demo app', async () => {
-  const { response, data } = await request('/api/apps'); assert.equal(response.status, 200); assert.deepEqual(data.map((app) => app.id).sort(), ['character-chat', 'demo-app']);
+  const { response, data } = await request('/api/apps'); assert.equal(response.status, 200); assert.deepEqual(data.map((app) => app.id).sort(), ['challenge-tree', 'character-chat', 'demo-app']);
   assert.equal((await request('/api/apps/demo-app')).data.capabilities.includes('run'), true);
+  assert.equal((await request('/api/apps/challenge-tree')).data.capabilities.includes('storage'), true);
   assert.equal((await fetch(base + '/ui/styles.css')).status, 200);
 });
 
@@ -26,6 +27,17 @@ test('demo app uses generic run and event protocol', async () => {
   assert.equal(created.response.status, 202); const runId = created.data.id;
   for (let i = 0; i < 30; i++) { const result = await request(`/api/runs/${runId}`); if (result.data.status === 'completed') break; await new Promise((resolve) => setTimeout(resolve, 20)); }
   const events = await request(`/api/runs/${runId}/events`); assert.ok(events.data.some((event) => event.type === 'message.delta')); assert.ok(events.data.some((event) => event.type === 'run.completed'));
+});
+
+test('challenge tree uses app-owned workspaces and generic runs', async () => {
+  const created = await request('/api/apps/challenge-tree/resources/workspaces', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ topic: '生成AIの基礎', goal: '仕組みを説明できるようになる' }) });
+  assert.equal(created.response.status, 201);
+  const workspace = await request(`/api/apps/challenge-tree/resources/workspaces/${created.data.project.id}`);
+  assert.equal(workspace.data.project.topic, '生成AIの基礎');
+  const run = await request('/api/apps/challenge-tree/runs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ operation: 'tree_propose', workspaceId: created.data.project.id, workspace: created.data }) });
+  for (let i = 0; i < 40; i++) { const result = await request(`/api/runs/${run.data.id}`); if (result.data.status === 'completed') break; await new Promise((resolve) => setTimeout(resolve, 20)); }
+  const events = await request(`/api/runs/${run.data.id}/events`); assert.ok(events.data.some((event) => event.type === 'result.completed'));
+  const removed = await request(`/api/apps/challenge-tree/resources/workspaces/${created.data.project.id}`, { method: 'DELETE' }); assert.equal(removed.response.status, 204);
 });
 
 test('agent model settings are shared by every app run', async () => {
