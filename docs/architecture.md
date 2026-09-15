@@ -40,7 +40,8 @@ agent-home/
 │  └─ app-sdk/                # small helpers for app authors
 ├─ apps/
 │  ├─ character-chat/         # app manifest, runtime, schema, prompts, and UI
-│  └─ demo-app/               # protocol-only smoke-test app
+│  ├─ demo-app/               # protocol-only smoke-test app
+│  └─ challenge-tree/         # learning tree app using the same protocol
 ├─ data/                      # runtime database and generated user assets
 ├─ docs/                      # architecture and protocol documentation
 ├─ test/                      # protocol/integration tests
@@ -72,4 +73,4 @@ SQLite uses WAL mode. Runs and events are durable; active in-memory controllers 
 
 ## Adding a second app
 
-Create a directory under `apps/` with `manifest.json`, `runtime.js` exporting `createApp()`, and an entry UI. Restart Gateway. No launcher code or app-specific Gateway branch is required. `apps/demo-app` is the protocol smoke-test example.
+Create a directory under `apps/` with `manifest.json`, `runtime.js` exporting `createApp()`, and an entry UI. Restart Gateway. No launcher code or app-specific Gateway branch is required. `apps/demo-app` is the protocol smoke-test example and `apps/challenge-tree` is a larger app using app-owned SQLite resources.

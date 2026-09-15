@@ -47,10 +47,11 @@ npm test
 - `packages/app-sdk/` — app author向け最小helper
 - `apps/character-chat/` — Protocol v0.1の最初の実装例
 - `apps/demo-app/` — Character Chat非依存の第二アプリ例
+- `apps/challenge-tree/` — ChallengeTreeをGateway直結へ移植した学習ツリーアプリ
 - `docs/architecture.md`, `docs/app-protocol.md` — 設計と仕様
 - `docs/character-chat-memory.md` — Character Chatのキャラ設定・Story記憶・削除方針
 
-新しいアプリは `apps/<id>/manifest.json` と `runtime.js`、UI entryを追加してGatewayを再起動するだけでLauncherに表示されます。
+新しいアプリは `apps/<id>/manifest.json` と `runtime.js`、UI entryを追加してGatewayを再起動するだけでLauncherに表示されます。ChallengeTreeもこの方式で登録されています。
 
 ## キャラクターアイコン生成
 
