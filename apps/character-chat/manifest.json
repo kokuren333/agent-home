@@ -1,0 +1,9 @@
+{
+  "id": "character-chat",
+  "name": "Character Chat",
+  "description": "軽量なキャラクター会話アプリ。ペルソナと会話履歴を保存します。",
+  "version": "0.1.0",
+  "icon": "/apps/character-chat/ui/assets/app-icon.png",
+  "entry": "/apps/character-chat/ui/index.html",
+  "capabilities": ["run", "stream", "cancel", "storage", "resources"]
+}

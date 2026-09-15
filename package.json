@@ -1,0 +1,13 @@
+{
+  "name": "agent-home",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A lightweight personal agent app launcher and gateway.",
+  "type": "module",
+  "scripts": {
+    "start": "node --experimental-sqlite gateway/server.js",
+    "dev": "node --experimental-sqlite gateway/server.js",
+    "test": "node --experimental-sqlite --test test/*.test.js"
+  },
+  "engines": { "node": ">=22.5.0" }
+}

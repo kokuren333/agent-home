@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#09111f">
+  <link rel="manifest" href="/apps/character-chat/manifest.json">
+  <link rel="stylesheet" href="/apps/character-chat/ui/styles.css?v=20260916-17">
+  <title>Character Chat</title>
+</head>
+<body>
+  <main class="cc-shell">
+    <header class="cc-topbar">
+      <a class="back-link" href="/">‹ アプリ</a>
+      <h1>キャラクターと話す</h1>
+      <div class="top-actions"><button id="persona-settings" class="top-button" type="button">あなた</button><span id="backend-status" class="backend-status">確認中</span></div>
+    </header>
+
+    <div class="cc-layout">
+      <aside class="library-card">
+        <div class="library-heading"><div><p class="eyebrow">CAST</p><h2>キャラクター</h2></div><button id="new-character" class="create-button" type="button">＋ 作成</button></div>
+        <div id="character-list" class="character-list"></div>
+        <div class="library-actions"><button id="edit-character" class="small-action" type="button">編集</button><button id="delete-character" class="small-action danger" type="button">削除</button></div>
+
+        <div class="stories-heading library-heading"><div><p class="eyebrow">STORIES</p><h2>ストーリー</h2></div><button id="new-story" class="round-button" type="button" aria-label="新しいStory">＋</button></div>
+        <div id="story-list" class="story-list"></div>
+      </aside>
+
+      <section class="chat-card">
+        <div id="empty-state" class="empty-state"><div class="empty-mark">✦</div><h2 id="empty-state-title">キャラクターを選ぶと会話が始まります</h2><p id="empty-state-description">左のキャラクターから選択してください。</p><button id="retry-conversation" class="small-action" type="button" hidden>再読み込み</button></div>
+
+        <div id="chat-view" class="chat-view" hidden>
+          <header class="chat-header">
+            <div class="chat-context"><div id="active-character-icon" class="avatar avatar-large"></div><div class="context-copy"><div class="title-line"><h2 id="conversation-title"></h2><span id="story-badge" class="story-badge">STORY</span></div><p id="conversation-description"></p><div id="participant-chips" class="participant-chips"></div></div></div>
+            <div class="chat-toolbar"><button id="story-settings" class="toolbar-button" type="button">Story設定</button><button id="memory-settings" class="toolbar-button" type="button">記憶</button><button id="add-participant" class="toolbar-button" type="button">＋ 登場</button><button id="delete-story" class="toolbar-button danger" type="button">Story削除</button></div>
+          </header>
+          <main id="messages" class="messages" aria-live="polite"></main>
+          <form id="composer" class="composer"><div class="composer-box"><textarea id="message-input" rows="1" placeholder="メッセージを書く…" aria-label="メッセージ"></textarea><div class="compose-meta"><span id="compose-hint">Enterで送信　·　Shift + Enterで改行</span><button id="stop-generation" class="stop-button" type="button" hidden>停止</button></div></div><button class="send-button" type="submit" aria-label="送信">➤</button></form>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <dialog id="character-dialog" class="modal"><form id="character-form" method="dialog"><div class="modal-heading"><div><p class="eyebrow">CHARACTER</p><h2 id="character-dialog-title">キャラクターを作成</h2></div></div><div class="form-grid"><label>名前<input id="character-name" required maxlength="80"></label><label>アイコン<div class="icon-picker"><div id="icon-preview" class="avatar avatar-preview"></div><button id="generate-icon" class="secondary-button" type="button">設定から生成</button></div></label><label>説明<textarea id="character-description" rows="2"></textarea></label><label>キャラ設定<textarea id="character-prompt" rows="7" placeholder="性格、話し方、好きなもの、苦手なこと、会話のルール…"></textarea></label><label>最初の挨拶<input id="character-greeting" maxlength="240"></label></div><p id="icon-generation-status" class="form-status"></p><div class="modal-actions"><button class="secondary-button cancel-button" type="button">キャンセル</button><button class="primary-button" value="save">保存</button></div></form></dialog>
+  <dialog id="persona-dialog" class="modal"><form id="persona-form" method="dialog"><div class="modal-heading"><div><p class="eyebrow">YOUR PERSONA</p><h2>あなたの設定</h2></div></div><label>表示名<input id="persona-name" maxlength="80" placeholder="あなた"></label><label>Persona<textarea id="persona-text" rows="6" placeholder="好み、呼ばれ方、会話で大切にしてほしいこと…"></textarea></label><div class="modal-actions"><button class="secondary-button cancel-button" type="button">キャンセル</button><button class="primary-button" value="save">保存</button></div></form></dialog>
+  <dialog id="story-dialog" class="modal"><form id="story-form" method="dialog"><div class="modal-heading"><div><p class="eyebrow">STORY SETTINGS</p><h2>Storyを整える</h2></div></div><label>タイトル<input id="story-title" required maxlength="120"></label><label>Plot / Story設定<textarea id="story-plot" rows="4" placeholder="舞台、目的、今後の展開…"></textarea></label><div class="form-row"><label>ジャンル<input id="story-genre" placeholder="SF、日常、恋愛…"></label><label>POV<select id="story-pov"><option>二人称</option><option>一人称</option><option>三人称</option></select></label></div><label>テンポ<select id="story-pace"><option>ゆっくり</option><option selected>自然</option><option>テンポよく</option><option>ドラマチック</option></select></label><div class="modal-actions"><button class="secondary-button cancel-button" type="button">キャンセル</button><button class="primary-button" value="save">保存</button></div></form></dialog>
+  <dialog id="memory-dialog" class="modal"><form id="memory-form" method="dialog"><div class="modal-heading"><div><p class="eyebrow">STORY MEMORY</p><h2>Storyの長期記憶</h2><p class="help-text">会話全文ではなく、あとで必要な事実だけを任意で保存します。</p></div></div><div id="memory-list" class="memory-list"></div><button id="new-memory" class="secondary-button memory-new" type="button">＋ 新しい記憶</button><input id="memory-id" type="hidden"><label>種類<select id="memory-kind"><option value="summary">自動要約</option><option value="fact">事実</option><option value="relationship">関係性</option><option value="setting">設定</option><option value="goal">目的・約束</option><option value="preference">好み</option></select></label><label>記憶する内容<textarea id="memory-content" rows="4" placeholder="例：このStoryでは、二人は廃駅で再会する約束をした"></textarea></label><div class="modal-actions"><button class="secondary-button cancel-button" type="button">閉じる</button><button class="primary-button" value="save">保存</button></div></form></dialog>
+  <dialog id="participant-dialog" class="modal"><form id="participant-form" method="dialog"><div class="modal-heading"><div><p class="eyebrow">CAST</p><h2>登場キャラクター</h2></div></div><div id="participant-list" class="participant-list"></div><fieldset class="participant-picker"><legend>キャラクターを追加</legend><div id="participant-choice-list" class="participant-choice-list"></div></fieldset><div class="modal-actions"><button class="secondary-button cancel-button" type="button">閉じる</button><button class="primary-button" value="add">追加</button></div></form></dialog>
+
+  <script type="module" src="/apps/character-chat/ui/app.js?v=20260916-17"></script>
+</body>
+</html>
