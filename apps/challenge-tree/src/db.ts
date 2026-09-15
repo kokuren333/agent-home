@@ -25,7 +25,7 @@ export async function listWorkspaces(): Promise<Workspace[]> { return await requ
 export async function saveWorkspace(workspace: Workspace): Promise<void> { await request(`/workspaces/${encodeURIComponent(workspace.project.id)}`, { method: 'PUT', body: JSON.stringify(workspace) }) }
 export async function saveWorkspaces(workspaces: Workspace[]): Promise<void> { await Promise.all(workspaces.map(saveWorkspace)) }
 export async function deleteWorkspace(projectId: string): Promise<void> { await request(`/workspaces/${encodeURIComponent(projectId)}`, { method: 'DELETE' }) }
-export async function getWorkspace(projectId: string): Promise<Workspace | undefined> { try { return await request<Workspace>(`/workspaces/${encodeURIComponent(projectId)}`) } catch { return undefined } }
+export async function getWorkspace(projectId: string): Promise<Workspace | undefined> { return await request<Workspace>(`/workspaces/${encodeURIComponent(projectId)}`) }
 export async function saveSnapshot(workspace: Workspace, reason: string): Promise<void> { await request(`/workspaces/${encodeURIComponent(workspace.project.id)}/snapshots`, { method: 'POST', body: JSON.stringify({ workspace, reason }) }) }
 export async function readSettings(): Promise<Settings | undefined> { return await request<Settings | undefined>('/settings') }
 export async function writeSettings(settings: Settings): Promise<void> { await request('/settings', { method: 'PUT', body: JSON.stringify(settings) }) }
@@ -35,10 +35,11 @@ export async function ensureSampleWorkspace(uiLanguage: 'ja' | 'en'): Promise<Wo
   const legacySample = existing.find((item) => ['sample-transformer', 'sample-transformer-v2'].includes(item.project.id))
   if (legacySample) await deleteWorkspace(legacySample.project.id)
   const remaining = existing.filter((item) => item !== legacySample)
-  if (remaining.length) return remaining
+  const currentSample = remaining.find((item) => item.project.id === 'sample-transformer-v3')
+  if (currentSample) return remaining
   const sample = createSampleWorkspace(uiLanguage)
   await saveWorkspace(sample)
-  return [sample]
+  return [...remaining, sample].sort((a, b) => b.project.updatedAt.localeCompare(a.project.updatedAt))
 }
 
 export type { Snapshot }

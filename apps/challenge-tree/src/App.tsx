@@ -5,7 +5,7 @@ import { applyGrade, getProgress, migrateWorkspace, migrateWorkspaceBundle } fro
 import { deleteWorkspace, ensureSampleWorkspace, getWorkspace, listWorkspaces, saveSnapshot, saveWorkspace, saveWorkspaces, readSettings, writeSettings } from './db'
 import { browserLanguage, t } from './i18n'
 import { ChallengeSchema, NodeCreateSchema, NodeSchema, ResourceSchema, WorkspaceBundleSchema } from './schemas'
-import type { Challenge, ChallengeMode, ConnectorModel, ConnectorStatus, CurriculumContext, Edge, GradeResponse, NodeRecord, Proposal, ResearchRecord, Resource, Settings, UiLanguage, Workspace, WorkspaceBundle } from './types'
+import type { Challenge, ChallengeMode, ConnectorStatus, CurriculumContext, Edge, GradeResponse, NodeRecord, Proposal, ResearchRecord, Resource, Settings, UiLanguage, Workspace, WorkspaceBundle } from './types'
 
 type Screen = 'home' | 'create' | 'proposals' | 'tree'
 type CreateMode = 'ai' | 'manual'
@@ -112,9 +112,6 @@ export default function App() {
   const [createForm, setCreateForm] = useState({ topic: '', goal: '', researchMode: 'global' as 'ja' | 'global', challengeMode: 'explain' as ChallengeMode, priorKnowledge: 'auto' })
   const [manualForm, setManualForm] = useState<ManualTreeForm>({ title: '', topic: '', goal: '', philosophy: '', learnerProfile: '', branches: '', advantages: '', tradeoffs: '', researchMode: 'global', challengeMode: 'explain' })
   const [connectorStatus, setConnectorStatus] = useState<ConnectorStatus>({ connected: false, authenticated: false })
-  const [availableModels, setAvailableModels] = useState<ConnectorModel[]>([])
-  const [modelsLoading, setModelsLoading] = useState(false)
-  const [modelsError, setModelsError] = useState('')
   const [busy, setBusy] = useState('')
   const [nodeBusy, setNodeBusy] = useState<Record<string, NodeOperation>>({})
   const [error, setError] = useState('')
@@ -123,8 +120,6 @@ export default function App() {
   const [nodeGradingLogs, setNodeGradingLogs] = useState<Record<string, string[]>>({})
   const [gradingLog, setGradingLog] = useState<string[]>([])
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [helpOpen, setHelpOpen] = useState(false)
-  const appliedSettingsRef = useRef<string | null>(null)
   const settingsRef = useRef(settings)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const workspaceRef = useRef<Workspace | null>(null)
@@ -152,8 +147,8 @@ export default function App() {
           workspaceEpochRef.current = Object.fromEntries(saved.map((item) => [item.project.id, 0]))
           setWorkspaces(saved)
         }
-      } catch {
-        if (active) setError(t(settings.uiLanguage, 'error.generic'))
+      } catch (error) {
+        if (active) setError(error instanceof Error ? error.message : t(settings.uiLanguage, 'error.generic'))
       }
     })()
     return () => { active = false }
@@ -171,32 +166,6 @@ export default function App() {
     const timer = window.setInterval(() => { void check() }, 7000)
     return () => { active = false; window.clearInterval(timer) }
   }, [connector])
-
-  useEffect(() => {
-    const requestedModel = settings.model?.trim()
-    const requestedEffort = settings.reasoningEffort?.trim() || 'low'
-    const requestedKey = `${requestedModel}:${requestedEffort}`
-    if (!requestedModel || (connectorStatus.model === requestedModel && connectorStatus.reasoningEffort === requestedEffort) || !connectorStatus.appServerRunning || !connectorStatus.authenticated || appliedSettingsRef.current === requestedKey) return
-    appliedSettingsRef.current = requestedKey
-    void connector.selectModel(requestedModel, requestedEffort).then(setConnectorStatus).catch(() => {
-      if (appliedSettingsRef.current === requestedKey) appliedSettingsRef.current = null
-    })
-  }, [connector, connectorStatus.appServerRunning, connectorStatus.authenticated, connectorStatus.model, connectorStatus.reasoningEffort, settings.model, settings.reasoningEffort])
-
-  useEffect(() => {
-    if (!settingsOpen) return
-    let active = true
-    setModelsLoading(true)
-    setModelsError('')
-    void connector.listModels().then((models) => {
-      if (active) setAvailableModels(models)
-    }).catch((caught) => {
-      if (active) setModelsError(caught instanceof Error ? caught.message : t(settings.uiLanguage, 'settings.modelLoadError'))
-    }).finally(() => {
-      if (active) setModelsLoading(false)
-    })
-    return () => { active = false }
-  }, [connector, settingsOpen])
 
   const lang = settings.uiLanguage
   const tr = useCallback((key: string, vars?: Record<string, string | number>) => t(lang, key, vars), [lang])
@@ -257,13 +226,17 @@ export default function App() {
   const openWorkspace = async (projectId: string) => {
     const requestId = ++openRequestRef.current
     setError('')
-    const item = workspaceStoreRef.current[projectId] ?? workspaces.find((candidate) => candidate.project.id === projectId) ?? await getWorkspace(projectId)
-    if (!item || requestId !== openRequestRef.current) return
-    workspaceStoreRef.current[item.project.id] = item
-    workspaceRef.current = item
-    setWorkspace(item)
-    setSelectedNodeId(item.tree.rootNodeId)
-    setScreen('tree')
+    try {
+      const item = workspaceStoreRef.current[projectId] ?? workspaces.find((candidate) => candidate.project.id === projectId) ?? await getWorkspace(projectId)
+      if (!item || requestId !== openRequestRef.current) return
+      workspaceStoreRef.current[item.project.id] = item
+      workspaceRef.current = item
+      setWorkspace(item)
+      setSelectedNodeId(item.tree.rootNodeId)
+      setScreen('tree')
+    } catch (caught) {
+      if (requestId === openRequestRef.current) setError(operationErrorMessage(caught, tr))
+    }
   }
 
   const goHome = () => {
@@ -317,7 +290,7 @@ export default function App() {
     try {
       await persist(next, 'new-project')
       setSelectedNodeId(rootId); setScreen('tree'); setNotice(tr('home.saved'))
-    } catch { setError(tr('error.generic')) } finally { setBusy('') }
+    } catch (caught) { setError(operationErrorMessage(caught, tr)) } finally { setBusy('') }
   }
 
   const handleManualCreate = async (event: FormEvent) => {
@@ -358,15 +331,7 @@ export default function App() {
   }
 
   const updateSettings = async (next: Settings) => {
-    const currentModel = connectorStatus.model || settings.model || 'gpt-5.6-luna'
-    const currentEffort = connectorStatus.reasoningEffort || settings.reasoningEffort || 'low'
-    const selectedModel = next.model?.trim() || currentModel
-    const selectedEffort = next.reasoningEffort?.trim() || currentEffort
-    if (selectedModel !== currentModel || selectedEffort !== currentEffort) {
-      const nextStatus = await connector.selectModel(selectedModel, selectedEffort)
-      setConnectorStatus(nextStatus)
-    }
-    const normalizedSettings = { ...next, model: selectedModel, reasoningEffort: selectedEffort }
+    const normalizedSettings = { ...next, model: connectorStatus.model || settings.model || 'gpt-5.6-luna', reasoningEffort: connectorStatus.reasoningEffort || settings.reasoningEffort || 'low' }
     setSettings(normalizedSettings)
     await writeSettings(normalizedSettings)
     if (workspace) await persist({ ...workspace, settings: normalizedSettings }, undefined, normalizedSettings)
@@ -434,7 +399,7 @@ export default function App() {
       delete workspaceEpochRef.current[projectId]
       setWorkspaces((items) => items.filter((item) => item.project.id !== projectId))
       if (workspace?.project.id === projectId) goHome()
-    } catch { setError(tr('error.generic')) }
+    } catch (caught) { setError(operationErrorMessage(caught, tr)) }
   }
 
   const setDraft = async (challengeId: string, answer: string) => {
@@ -450,7 +415,7 @@ export default function App() {
     if (draftTimersRef.current[projectId]) window.clearTimeout(draftTimersRef.current[projectId])
     draftTimersRef.current[projectId] = window.setTimeout(() => {
       const latest = workspaceStoreRef.current[projectId]
-      if (latest) void persist(latest).catch(() => { if (isCurrentProject(projectId)) setError(tr('error.generic')) })
+      if (latest) void persist(latest).catch((caught) => { if (isCurrentProject(projectId)) setError(operationErrorMessage(caught, tr)) })
     }, 250)
   }
 
@@ -659,18 +624,18 @@ export default function App() {
   if (screen === 'proposals') return <><ProposalScreen lang={lang} tr={tr} proposals={proposals} topic={createForm.topic} busy={busy === 'save'} error={error} onChoose={chooseProposal} onBack={() => setScreen('create')} /></>
   if (screen === 'tree' && workspace) return <>
     <TreeScreen workspace={workspace} lang={lang} tr={tr} selectedNodeId={selectedNodeId} setSelectedNodeId={setSelectedNodeId} connectorStatus={connectorStatus} nodeBusy={nodeBusy} lastGrades={lastGrades} nodeGradingLogs={nodeGradingLogs} error={error} notice={notice} onBack={goHome} onSettings={() => setSettingsOpen(true)} onImport={() => fileInputRef.current?.click()} onExport={exportWorkspace} onDraft={setDraft} onCreateChallenge={createChallenge} onSubmit={submitAnswer} onExpand={expandNode} onManualNode={createManualNode} onRetry={() => { if (selectedNodeId) setNodeGrade(workspace.project.id, selectedNodeId, null) }} onRefreshConnector={refresh} onClearMessage={() => { setError(''); setNotice('') }} />
-     {settingsOpen && <SettingsModal settings={settings} currentModel={connectorStatus.model} currentReasoningEffort={connectorStatus.reasoningEffort} models={availableModels} modelsLoading={modelsLoading} modelsError={modelsError} lang={lang} tr={tr} onClose={() => setSettingsOpen(false)} onSave={updateSettings} />}
+     {settingsOpen && <SettingsModal settings={settings} lang={lang} tr={tr} onClose={() => setSettingsOpen(false)} onSave={updateSettings} />}
   </>
   return <>
-    <HomeScreen workspaces={workspaces} lang={lang} tr={tr} connectorStatus={connectorStatus} error={error} onNew={() => { setError(''); setCreateMode('ai'); setScreen('create') }} onOpen={openWorkspace} onImport={() => fileInputRef.current?.click()} onExport={exportWorkspace} onSettings={() => setSettingsOpen(true)} onHelp={() => setHelpOpen(true)} onRefreshConnector={refresh} onDelete={deleteProject} />
+    <HomeScreen workspaces={workspaces} lang={lang} tr={tr} connectorStatus={connectorStatus} error={error} onNew={() => { setError(''); setCreateMode('ai'); setScreen('create') }} onOpen={openWorkspace} onImport={() => fileInputRef.current?.click()} onExport={exportWorkspace} onSettings={() => setSettingsOpen(true)} onRefreshConnector={refresh} onDelete={deleteProject} />
     <input ref={fileInputRef} hidden type="file" accept="application/json,.json,.challenge-tree" onChange={importSave} />
-    {settingsOpen && <SettingsModal settings={settings} currentModel={connectorStatus.model} currentReasoningEffort={connectorStatus.reasoningEffort} models={availableModels} modelsLoading={modelsLoading} modelsError={modelsError} lang={lang} tr={tr} onClose={() => setSettingsOpen(false)} onSave={updateSettings} />}
-    {helpOpen && <HelpModal lang={lang} tr={tr} onClose={() => setHelpOpen(false)} />}
+    {settingsOpen && <SettingsModal settings={settings} lang={lang} tr={tr} onClose={() => setSettingsOpen(false)} onSave={updateSettings} />}
   </>
 }
 
 function Header({ lang, tr, connectorStatus, onSettings, onBack, onImport, onExport }: { lang: UiLanguage; tr: (key: string, vars?: Record<string, string | number>) => string; connectorStatus: ConnectorStatus; onSettings?: () => void; onBack?: () => void; onImport?: () => void; onExport?: () => void }) {
   return <header className="topbar">
+    <a className="launcher-link" href="/" aria-label="Launcherへ戻る">‹ Launcher</a>
     <div className="brand-lockup" onClick={onBack} onKeyDown={(event) => { if (onBack && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); onBack() } }} role={onBack ? 'button' : undefined} tabIndex={onBack ? 0 : undefined}>
       <img src={`${import.meta.env.BASE_URL}assets/challenge-tree-logo.svg`} alt="" className="brand-mark" />
       <span>{tr('app.name')}</span>
@@ -684,7 +649,7 @@ function Header({ lang, tr, connectorStatus, onSettings, onBack, onImport, onExp
   </header>
 }
 
-function HomeScreen({ workspaces, lang, tr, connectorStatus, error, onNew, onOpen, onImport, onExport, onSettings, onHelp, onRefreshConnector, onDelete }: { workspaces: Workspace[]; lang: UiLanguage; tr: (key: string, vars?: Record<string, string | number>) => string; connectorStatus: ConnectorStatus; error: string; onNew: () => void; onOpen: (id: string) => void; onImport: () => void; onExport: () => void; onSettings: () => void; onHelp: () => void; onRefreshConnector: () => void; onDelete: (id: string) => void }) {
+function HomeScreen({ workspaces, lang, tr, connectorStatus, error, onNew, onOpen, onImport, onExport, onSettings, onRefreshConnector, onDelete }: { workspaces: Workspace[]; lang: UiLanguage; tr: (key: string, vars?: Record<string, string | number>) => string; connectorStatus: ConnectorStatus; error: string; onNew: () => void; onOpen: (id: string) => void; onImport: () => void; onExport: () => void; onSettings: () => void; onRefreshConnector: () => void; onDelete: (id: string) => void }) {
   return <div className="app-frame home-frame"><Header lang={lang} tr={tr} connectorStatus={connectorStatus} onImport={onImport} onExport={onExport} onSettings={onSettings} />
     <main className="home-content">
       <section className="home-intro"><p className="eyebrow">{tr('app.tagline')}</p><h1>{tr('app.name')}</h1></section>
@@ -693,7 +658,7 @@ function HomeScreen({ workspaces, lang, tr, connectorStatus, error, onNew, onOpe
       <section className="project-section"><div className="section-heading"><div><p className="eyebrow">{tr('home.continue')}</p><h2>{tr('home.projects')}</h2></div><span className="save-mark"><span className="status-dot good" /> {tr('home.saved')}</span></div>
         {workspaces.length === 0 ? <div className="empty-state">{tr('home.noProjects')}</div> : <div className="project-list">{workspaces.map((item) => <ProjectRow key={item.project.id} workspace={item} tr={tr} onOpen={() => onOpen(item.project.id)} onDelete={() => onDelete(item.project.id)} />)}</div>}
       </section>
-      <section className="connector-panel"><div className="section-heading"><div><p className="eyebrow">{tr('home.connector')}</p><h2><span className={`status-dot ${connectorStatus.connected ? 'good' : 'muted'}`} /> {connectorStatus.connected && connectorStatus.authenticated ? tr('home.connected') : tr('home.notRunning')}</h2></div><button className="quiet-button" onClick={onRefreshConnector}><Icon name="refresh" /> {tr('home.retry')}</button></div><p>{tr('home.connectHint')}</p><ConnectorDiagnostics status={connectorStatus} tr={tr} /><button className="text-button" onClick={onHelp}>{tr('home.download')} <Icon name="arrow" /></button></section>
+      <section className="connector-panel"><div className="section-heading"><div><p className="eyebrow">Gateway</p><h2><span className={`status-dot ${connectorStatus.connected ? 'good' : 'muted'}`} /> {connectorStatus.connected && connectorStatus.authenticated ? tr('home.connected') : tr('home.notRunning')}</h2></div><button className="quiet-button" onClick={onRefreshConnector}><Icon name="refresh" /> {tr('home.retry')}</button></div><p>Agent処理はagent-home Gateway経由で実行されます。</p></section>
     </main><footer className="app-footer"><span>{tr('footer.local')}</span><span>{tr('footer.version')}</span></footer>
   </div>
 }
@@ -887,34 +852,22 @@ function ResearchHistory({ records }: { records: ResearchRecord[] }) {
   return <section className="research-history"><div className="section-title"><h3>調査履歴</h3><span>{records.length}</span></div>{records.slice().reverse().map((record) => <details key={record.id}><summary><strong>{labels[record.operation]}</strong><time>{new Date(record.completedAt).toLocaleString()}</time><p>{record.summary}</p></summary><div className="research-detail">{record.searches.length > 0 && <p><strong>検索:</strong> {record.searches.join(' / ')}</p>}{record.logs.length > 0 && <div><strong>検索ログ</strong>{record.logs.map((item, index) => <p key={`${record.id}-log-${index}`}>{item}</p>)}</div>}{record.sources.length > 0 && <div><strong>確認した出典</strong>{record.sources.map((source) => <a key={`${record.id}-${source.url}`} href={source.url} target="_blank" rel="noreferrer">{source.title}</a>)}</div>}{record.unknownClaims.length > 0 && <div><strong>確認できなかった点</strong>{record.unknownClaims.map((item) => <p key={item}>{item}</p>)}</div>}</div></details>)}</section>
 }
 
-function SettingsModal({ settings, currentModel, currentReasoningEffort, models, modelsLoading, modelsError, lang, tr, onClose, onSave }: { settings: Settings; currentModel?: string; currentReasoningEffort?: string | null; models: ConnectorModel[]; modelsLoading: boolean; modelsError: string; lang: UiLanguage; tr: (key: string, vars?: Record<string, string | number>) => string; onClose: () => void; onSave: (settings: Settings) => Promise<void> }) {
-  const [draft, setDraft] = useState({ ...settings, model: settings.model || currentModel || 'gpt-5.6-luna', reasoningEffort: settings.reasoningEffort || currentReasoningEffort || 'low' })
+function SettingsModal({ settings, lang, tr, onClose, onSave }: { settings: Settings; lang: UiLanguage; tr: (key: string, vars?: Record<string, string | number>) => string; onClose: () => void; onSave: (settings: Settings) => Promise<void> }) {
+  const [draft, setDraft] = useState(settings)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState('')
-  const fallbackModel = currentModel || draft.model
-  const fallbackEffort = currentReasoningEffort || draft.reasoningEffort || 'low'
-  const fallbackEntries = [fallbackModel, draft.model].filter((item, index, all): item is string => Boolean(item) && all.indexOf(item) === index).map((model) => ({ id: model, model, displayName: model, description: '', defaultReasoningEffort: fallbackEffort, supportedReasoningEfforts: [{ reasoningEffort: fallbackEffort, description: '' }], isDefault: false }))
-  const modelOptions = [...fallbackEntries, ...models].filter((item, index, all) => all.findIndex((candidate) => candidate.model === item.model) === index)
-  const selectedEntry = modelOptions.find((item) => item.model === draft.model) || modelOptions[0]
-  const effortOptions = selectedEntry?.supportedReasoningEfforts.length ? selectedEntry.supportedReasoningEfforts : [{ reasoningEffort: draft.reasoningEffort || fallbackEffort, description: '' }]
-  const selectedEffort = draft.reasoningEffort || selectedEntry?.defaultReasoningEffort || effortOptions[0]?.reasoningEffort || ''
-  const selectModel = (model: string) => {
-    const entry = modelOptions.find((item) => item.model === model)
-    const effort = entry?.supportedReasoningEfforts.find((item) => item.reasoningEffort === draft.reasoningEffort)?.reasoningEffort || entry?.defaultReasoningEffort || entry?.supportedReasoningEfforts[0]?.reasoningEffort || 'low'
-    setDraft({ ...draft, model, reasoningEffort: effort })
-  }
   const submit = async () => {
     setSaving(true)
     setSaveError('')
     try {
-      await onSave({ ...draft, model: draft.model || fallbackModel, reasoningEffort: selectedEffort })
+      await onSave(draft)
   } catch (caught) {
       setSaveError(caught instanceof Error ? caught.message : tr('settings.modelSaveError'))
     } finally {
       setSaving(false)
     }
   }
-  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) onClose() }}><section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title"><div className="modal-head"><div><p className="eyebrow">{tr('nav.settings')}</p><h2 id="settings-title">{tr('settings.title')}</h2></div><button className="icon-button" onClick={onClose} aria-label={tr('settings.close')} disabled={saving}><Icon name="close" /></button></div><label>{tr('settings.language')}<select value={draft.uiLanguage} onChange={(event) => setDraft({ ...draft, uiLanguage: event.target.value as UiLanguage })} disabled={saving}><option value="ja">日本語</option><option value="en">English</option></select><small>{tr('settings.languageHint')}</small></label><label>{tr('settings.model')}<select value={draft.model || ''} onChange={(event) => selectModel(event.target.value)} disabled={modelsLoading || modelOptions.length === 0 || saving}><option value="" disabled>{modelsLoading ? tr('settings.modelLoading') : tr('settings.modelUnavailable')}</option>{modelOptions.map((item) => <option key={item.id} value={item.model}>{item.displayName === item.model ? item.model : `${item.displayName} · ${item.model}`}</option>)}</select><small>{tr('settings.modelHint')}</small></label><label>{tr('settings.reasoningEffort')}<select value={selectedEffort} onChange={(event) => setDraft({ ...draft, reasoningEffort: event.target.value })} disabled={modelsLoading || effortOptions.length === 0 || saving}>{effortOptions.map((item) => <option key={item.reasoningEffort} value={item.reasoningEffort}>{item.reasoningEffort}</option>)}</select><small>{tr('settings.reasoningEffortHint')}</small></label>{modelsError && <p className="settings-error" role="alert">{modelsError}</p>}<div className="settings-note"><Icon name="connector" /><span><strong>{tr('settings.connectorReady')}</strong><small>{tr('settings.connectorReadyHint')}</small></span></div><label className="toggle-row"><span><strong>{tr('settings.motion')}</strong><small>{tr('settings.motionHint')}</small></span><input type="checkbox" checked={draft.reducedMotion} onChange={(event) => setDraft({ ...draft, reducedMotion: event.target.checked })} disabled={saving} /></label>{saveError && <p className="settings-error" role="alert">{saveError}</p>}<div className="modal-actions"><button className="secondary-button" onClick={onClose} disabled={saving}>{tr('settings.close')}</button><button className="primary-button" onClick={() => void submit()} disabled={modelsLoading || modelOptions.length === 0 || saving}>{saving ? tr('settings.modelApplying') : tr('settings.save')}</button></div></section></div>
+  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) onClose() }}><section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title"><div className="modal-head"><div><p className="eyebrow">{tr('nav.settings')}</p><h2 id="settings-title">{tr('settings.title')}</h2></div><button className="icon-button" onClick={onClose} aria-label={tr('settings.close')} disabled={saving}><Icon name="close" /></button></div><label>{tr('settings.language')}<select value={draft.uiLanguage} onChange={(event) => setDraft({ ...draft, uiLanguage: event.target.value as UiLanguage })} disabled={saving}><option value="ja">日本語</option><option value="en">English</option></select><small>{tr('settings.languageHint')}</small></label><div className="settings-note"><Icon name="settings" /><span><strong>モデル設定はLauncherで管理</strong><small>Agentモデルとreasoning effortはランチャーの共通設定から変更できます。</small></span></div><label className="toggle-row"><span><strong>{tr('settings.motion')}</strong><small>{tr('settings.motionHint')}</small></span><input type="checkbox" checked={draft.reducedMotion} onChange={(event) => setDraft({ ...draft, reducedMotion: event.target.checked })} disabled={saving} /></label>{saveError && <p className="settings-error" role="alert">{saveError}</p>}<div className="modal-actions"><button className="secondary-button" onClick={onClose} disabled={saving}>{tr('settings.close')}</button><button className="primary-button" onClick={() => void submit()} disabled={saving}>{saving ? tr('settings.save') : tr('settings.save')}</button></div></section></div>
 }
 
 function HelpModal({ lang, tr, onClose }: { lang: UiLanguage; tr: (key: string, vars?: Record<string, string | number>) => string; onClose: () => void }) {

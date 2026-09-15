@@ -33,6 +33,8 @@ a { color: var(--teal-strong); }
 .app-frame { min-height: 100vh; background: var(--bg); }
 .home-frame { display: flex; flex-direction: column; }
 .topbar { min-height: 66px; padding: 0 32px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line-soft); background: rgba(17, 21, 23, .94); }
+.launcher-link { flex: 0 0 auto; margin-right: 20px; color: var(--teal-strong); font-size: 13px; font-weight: 650; text-decoration: none; }
+.launcher-link:hover { color: var(--text); }
 .brand-lockup { display: inline-flex; align-items: center; gap: 10px; color: var(--text); font-size: 15px; font-weight: 660; letter-spacing: .01em; }
 .brand-lockup[role="button"] { cursor: pointer; }
 .brand-mark { width: 27px; height: 27px; }
