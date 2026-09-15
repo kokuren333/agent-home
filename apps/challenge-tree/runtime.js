@@ -94,8 +94,9 @@ export function createApp({ db }) {
     if (operation !== 'tree_propose' && operation !== 'node_create' && operation !== 'answer_grade' && payload.workspaceId && !getWorkspace(payload.workspaceId)) throw new Error('Workspace not found');
     emit('progress', { operation, message: '生成しています…' });
     let result = backend.name === 'mock' ? mockResult(operation, payload) : null;
-    if (backend.name !== 'mock') { let output = ''; for await (const delta of backend.stream(promptFor(operation, payload), { signal })) { output += delta; emit('message.delta', { operation, text: delta }); } if (signal.aborted) return; result = extractJson(output); }
-    emit('result.completed', { operation, result, research: { searchCalls: 0, searches: [], sources: [], logs: [] } });
+    let research = { searchCalls: 0, searches: [], sources: [], logs: [] };
+    if (backend.name !== 'mock') { let output = ''; for await (const delta of backend.stream(promptFor(operation, payload), { signal, webSearch: true })) { output += delta; emit('message.delta', { operation, text: delta }); } if (signal.aborted) return; result = extractJson(output); if (typeof backend.getLastResearch === 'function') research = backend.getLastResearch(); }
+    emit('result.completed', { operation, result, research });
   }
 
   async function resources({ method, path, body }) {

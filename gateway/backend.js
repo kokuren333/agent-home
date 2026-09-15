@@ -41,7 +41,7 @@ export class MockBackend {
 }
 
 export class CodexCliBackend {
-  constructor({ bin = resolveCodexBin(), settings = {} } = {}) { this.name = 'codex-cli'; this.bin = bin; this.settings = settings; }
+  constructor({ bin = resolveCodexBin(), settings = {} } = {}) { this.name = 'codex-cli'; this.bin = bin; this.settings = settings; this.lastResearch = { searchCalls: 0, searches: [], sources: [], logs: [] }; }
   withSettings(settings) { return new CodexCliBackend({ bin: this.bin, settings }); }
   async listModels() {
     return await new Promise((resolve, reject) => {
@@ -78,10 +78,22 @@ export class CodexCliBackend {
       child.on('close', (code) => resolve({ ok: code === 0, backend: this.name, version: output.trim() }));
     });
   }
-  async *stream(prompt, { signal } = {}) {
+  getLastResearch() { return this.lastResearch; }
+  async *stream(prompt, { signal, webSearch = false } = {}) {
     const args = ['exec', '--json', '--skip-git-repo-check'];
     if (this.settings.model) args.push('--model', this.settings.model);
     if (this.settings.reasoningEffort) args.push('--config', `model_reasoning_effort="${this.settings.reasoningEffort}"`);
+    if (webSearch) args.push('--config', 'tools.web_search=true');
+    this.lastResearch = { searchCalls: 0, searches: [], sources: [], logs: [] };
+    const inspectResearch = (event) => {
+      const serialized = JSON.stringify(event);
+      if (!/web[_-]?search|search[_-]?call/i.test(serialized)) return;
+      this.lastResearch.searchCalls += 1;
+      const urls = [...serialized.matchAll(/https?:\/\/[^"\\\s]+/g)].map((match) => match[0].replace(/[),.]+$/, ''));
+      for (const url of urls) if (!this.lastResearch.sources.some((source) => source.url === url)) this.lastResearch.sources.push({ title: url, url });
+      const query = event.query || event.search_query || event.item?.query || event.item?.search_query;
+      if (typeof query === 'string' && query.trim() && !this.lastResearch.searches.includes(query.trim())) this.lastResearch.searches.push(query.trim());
+    };
     args.push(prompt);
     const child = spawn(this.bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
@@ -98,6 +110,7 @@ export class CodexCliBackend {
         if (!line.trim()) continue;
         try {
           const event = JSON.parse(line);
+          inspectResearch(event);
           const delta = event.delta ?? event.text ?? event.item?.text;
           if (typeof delta === 'string') yield delta;
         } catch { /* Codex output can include non-JSON diagnostic lines. */ }
