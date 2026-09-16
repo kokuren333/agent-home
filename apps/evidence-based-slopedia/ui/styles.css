@@ -64,7 +64,7 @@ h1 { max-width: 720px; margin-bottom: 1.2rem; font-size: clamp(2.4rem, 7vw, 5.1r
 .article-card p { margin: 0; color: var(--muted); font-size: .85rem; line-height: 1.6; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
 .article-card-link { margin-top: auto; padding-top: 1rem; color: var(--accent); font: .75rem ui-sans-serif, sans-serif; }
 .article-page { max-width: 900px; margin: auto; padding: 5rem 1rem 7rem; }
-.article-detail h1 { margin: .4rem 0 1rem; font-size: clamp(2.2rem, 6vw, 4.8rem); line-height: 1.15; }
+.article-detail h1 { margin: .4rem 0 1rem; font-size: clamp(2.2rem, 6vw, 4.8rem); line-height: 1.15; overflow-wrap: anywhere; word-break: break-word; }
 .article-detail time { color: var(--muted); font: .8rem ui-sans-serif, sans-serif; }
 .article-hero-image { display: block; width: 100%; max-height: 520px; object-fit: contain; margin: 3rem 0; background: #e9edec; }
 .article-body { margin-top: 3rem; font-size: 1.05rem; line-height: 2; }
@@ -73,10 +73,13 @@ h1 { max-width: 720px; margin-bottom: 1.2rem; font-size: clamp(2.4rem, 7vw, 5.1r
 .article-body a { color: var(--accent); text-decoration: underline; text-underline-offset: .15em; overflow-wrap: anywhere; }
 .back-link { display: inline-block; margin-top: 3rem; color: var(--accent); }
 .news-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .65rem; }
-.news-card { display: flex; flex-direction: column; justify-content: space-between; min-height: 132px; border-top: 3px solid var(--line); background: var(--surface); padding: .8rem; }
+.news-card { display: flex; flex-direction: column; justify-content: space-between; min-height: 132px; border-top: 3px solid var(--line); background: var(--surface); padding: .8rem; color: var(--ink); text-decoration: none; }
+.news-card:hover { border-top-color: var(--accent); }
+.news-card > img { width: calc(100% + 1.6rem); aspect-ratio: 16 / 9; object-fit: cover; margin: -.8rem -.8rem .8rem; background: #e9edec; }
 .news-card > div { margin-top: 1rem; }
 .news-card p { margin-bottom: .3rem; font-size: .87rem; font-weight: 700; line-height: 1.35; }
 .news-card div span { color: var(--muted); font: .72rem ui-sans-serif, sans-serif; }
+.news-card small { display: block; margin-top: .65rem; color: var(--accent); font: .72rem ui-sans-serif, sans-serif; }
 .news-number { color: var(--gold); font: 700 .78rem ui-sans-serif, sans-serif; }
 .news-queued { border-top-color: var(--gold); }
 .news-running, .news-waiting_publish, .news-publishing { border-top-color: var(--accent); }
