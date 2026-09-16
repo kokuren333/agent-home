@@ -17,6 +17,8 @@ const NEWS_FIELDS = [
 ];
 const ACTIVE = ['queued', 'running', 'waiting_publish', 'publishing'];
 const GENERATED = ['completed', 'published', 'succeeded'];
+const DEFAULT_WORKER_CONCURRENCY = 3;
+const MAX_RETRIES = 2;
 const iso = () => new Date().toISOString();
 
 function publicJob(row) {
@@ -69,6 +71,7 @@ export function createApp({ db, root, imageGenerator } = {}) {
       payload_json TEXT NOT NULL DEFAULT '{}',
       phase TEXT NOT NULL DEFAULT '',
       error TEXT NOT NULL DEFAULT '',
+      attempt_count INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -78,6 +81,7 @@ export function createApp({ db, root, imageGenerator } = {}) {
   for (const statement of [
     "ALTER TABLE ebs_jobs ADD COLUMN phase TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE ebs_jobs ADD COLUMN error TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE ebs_jobs ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0",
   ]) {
     try { db.exec(statement); } catch (error) { if (!/duplicate column name/i.test(String(error.message))) throw error; }
   }
@@ -208,7 +212,7 @@ briefには、記事の主張に対応する日本語インフォグラフィッ
 次の工程をすべて実行する：教科書的な日本語本文への改稿、分類と小分野MOC更新、公開用frontmatter整備、画像参照の挿入、publish edit、citation audit、quality audit、Obsidian publisher。
 
 画像はすでにimagegenで生成され、Vault内の次のPNGとして保存されている：${infographicPath}
-この記事の先頭にObsidian埋め込みとして参照し、図解キャプションにも引用番号を付ける。必須frontmatterのキーと順序、引用番号付き本文、URLとAccessed date付き参考ソース、歴史的背景、現在の標準、限界・論争点・未解決事項、更新履歴・更新日付を満たすこと。
+この記事の先頭にObsidian埋め込みとして参照し、図解キャプションにも引用番号を付ける。frontmatterには必ず status: published、draft: false、publish_ready: true、has_infographic: true、および画像参照のキーを設定する。引用番号付き本文、URLとAccessed date付き参考ソース、歴史的背景、現在の標準、限界・論争点・未解決事項、更新履歴・更新日付も満たすこと。
 
 Publish Gateを満たす場合だけ最終記事を所定の公開ディレクトリへ保存する。満たさない場合は公開ディレクトリへ置かず、理由を_working/review_reportsまたは70_Logsへ保存する。既存ファイルを上書きしない。説明だけで終わらせず、ファイルを実際に更新する。`;
   }
@@ -228,6 +232,13 @@ Publish Gateを満たす場合だけ最終記事を所定の公開ディレク�
     if (job.job_type === 'daily_news') required.push(/type:\s*daily_news/i, new RegExp(`date:\\s*${job.daily_date}`));
     if (required.some((pattern) => !pattern.test(text))) throw new Error(`Publish Gate failed: required article fields or evidence are missing (${pathModule.relative(contentRoot, file)})`);
     if (!text.includes(infographicPath.replace(/\\/g, '/'))) throw new Error(`Publish Gate failed: infographic reference is missing (${pathModule.relative(contentRoot, file)})`);
+  }
+
+  function ensureInfographicFrontmatter(file) {
+    let text = fs.readFileSync(file, 'utf8');
+    if (!/^---[\s\S]*?---/m.test(text) || /^has_infographic:\s*true\s*$/mi.test(text)) return;
+    text = text.replace(/^(publish_ready:\s*true\s*)$/mi, '$1\nhas_infographic: true');
+    fs.writeFileSync(file, text);
   }
 
   async function processJob(job, backendForWorker, generator) {
@@ -259,12 +270,62 @@ Publish Gateを満たす場合だけ最終記事を所定の公開ディレク�
     await backendForWorker.run(finalPrompt(job, researchPath, infographicPath), { cwd: contentRoot, webSearch: true, write: true });
     const candidates = outputCandidates(job, startedAt, beforeFiles);
     if (candidates.length !== 1) throw new Error(`EBS worker expected one new published article, found ${candidates.length}.`);
+    ensureInfographicFrontmatter(candidates[0]);
     validatePublishedFile(candidates[0], job, infographicPath);
     updateJob(job.id, 'completed', 'published');
   }
 
   let workerPromise = null;
   let workerState = { connected: false, message: 'Worker未接続。AGENT_BACKEND=codexで起動してください。' };
+  const workerConcurrency = Math.max(1, Math.min(8, Number.parseInt(process.env.EBS_WORKER_CONCURRENCY || String(DEFAULT_WORKER_CONCURRENCY), 10) || DEFAULT_WORKER_CONCURRENCY));
+  function claimNextJob() {
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      const row = db.prepare("SELECT * FROM ebs_jobs WHERE status='queued' ORDER BY created_at ASC LIMIT 1").get();
+      if (!row) { db.exec('COMMIT'); return null; }
+      db.prepare("UPDATE ebs_jobs SET status='running', phase='source_discovery', attempt_count=attempt_count+1, updated_at=? WHERE id=? AND status='queued'").run(iso(), row.id);
+      const claimed = db.prepare('SELECT * FROM ebs_jobs WHERE id=?').get(row.id);
+      db.exec('COMMIT');
+      return claimed;
+    } catch (error) { db.exec('ROLLBACK'); throw error; }
+  }
+  function retryableError(error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+  function cleanupFailedAttempt(job) {
+    const startedAt = Date.parse(job.updated_at || '') || 0;
+    const recent = (file) => fs.existsSync(file) && (!startedAt || fs.statSync(file).mtimeMs >= startedAt - 2000);
+    const workDir = pathModule.join(contentRoot, '_working', 'ebs-jobs', job.id);
+    const generatedName = job.job_type === 'daily_news' ? `${job.daily_date}_${job.news_field}.png` : `${job.id}.png`;
+    const generatedPath = pathModule.join(root || process.cwd(), 'data', 'ebs-imagegen', job.id, generatedName);
+    const infographicPath = job.job_type === 'daily_news'
+      ? pathModule.join(contentRoot, '50_Assets', 'Infographics', 'Daily', generatedName)
+      : pathModule.join(contentRoot, '50_Assets', 'Infographics', generatedName);
+    for (const file of [generatedPath, infographicPath, pathModule.join(contentRoot, '70_Logs', 'infographic_logs', `${job.id}.json`)]) {
+      if (recent(file)) { try { fs.rmSync(file, { force: true }); } catch {} }
+    }
+    if (recent(workDir)) { try { fs.rmSync(workDir, { recursive: true, force: true }); } catch {} }
+    const articleFile = job.job_type === 'daily_news'
+      ? pathModule.join(contentRoot, '11_Daily', job.news_field, job.daily_date.slice(0, 7), `${job.daily_date}_${job.news_field}.md`)
+      : null;
+    if (articleFile && recent(articleFile)) { try { fs.rmSync(articleFile, { force: true }); } catch {} }
+  }
+  function runWorker(backendForWorker, generator) {
+    return (async () => {
+      while (true) {
+        const row = claimNextJob();
+        if (!row) return;
+        try { await processJob(row, backendForWorker, generator); }
+        catch (error) {
+          const message = retryableError(error);
+          const latest = db.prepare('SELECT attempt_count FROM ebs_jobs WHERE id=?').get(row.id);
+          cleanupFailedAttempt(row);
+          if ((latest?.attempt_count || 0) <= MAX_RETRIES) updateJob(row.id, 'queued', 'retrying', message);
+          else updateJob(row.id, 'failed', 'failed', message);
+        }
+      }
+    })();
+  }
   function startWorker({ backend: backendForWorker, imageGenerator: generator = imageGenerator } = {}) {
     if (!backendForWorker || backendForWorker.name !== 'codex-cli' || !generator) {
       workerState = { connected: false, message: 'Worker未接続。AGENT_BACKEND=codexで起動してください。' };
@@ -272,14 +333,7 @@ Publish Gateを満たす場合だけ最終記事を所定の公開ディレク�
     }
     workerState = { connected: true, message: 'Worker接続済み' };
     if (workerPromise) return;
-    workerPromise = (async () => {
-      while (true) {
-        const row = db.prepare(`SELECT * FROM ebs_jobs WHERE status='queued' ORDER BY created_at ASC LIMIT 1`).get();
-        if (!row) break;
-        try { await processJob(row, backendForWorker, generator); }
-        catch (error) { updateJob(row.id, 'failed', 'failed', error instanceof Error ? error.message : String(error)); }
-      }
-    })().finally(() => { workerPromise = null; });
+    workerPromise = Promise.all(Array.from({ length: workerConcurrency }, () => runWorker(backendForWorker, generator))).finally(() => { workerPromise = null; });
   }
 
   function enqueueDailyNews(date) {
