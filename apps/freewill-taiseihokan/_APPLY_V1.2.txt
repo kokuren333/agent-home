@@ -1,0 +1,14 @@
+v1.2 変更ファイル
+
+このZIPの内容を既存リポジトリ直下へ上書きしてください。
+その後、旧サンプル用の次のファイルが残っている場合は削除してください。
+
+examples/taiseihoukan-example/objections.json
+
+このファイルは実アプリ動作には参照されませんが、v1.2では大政奉還本体に objections.json を含めないため削除を推奨します。
+
+上書き後:
+  npm run build
+  git add .
+  git commit -m "Separate objection workflow"
+  git push

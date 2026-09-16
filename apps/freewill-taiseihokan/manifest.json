@@ -1,0 +1,9 @@
+{
+  "id": "freewill-taiseihokan",
+  "name": "自由意志大政奉還",
+  "description": "自由意志を入力・保存し、外部で作成した大政奉還データを管理する静的アプリです。",
+  "version": "1.3.0",
+  "icon": "/apps/freewill-taiseihokan/assets-launcher-icon.png",
+  "entry": "/apps/freewill-taiseihokan/dist/index.html",
+  "capabilities": []
+}

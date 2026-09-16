@@ -1,0 +1,5 @@
+node_modules/
+.DS_Store
+*.local
+# The generated dist/ directory is the installable static app entry.
+dist/**/*.map

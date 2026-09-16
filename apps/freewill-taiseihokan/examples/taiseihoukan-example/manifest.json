@@ -1,0 +1,12 @@
+{
+  "format": "taiseihoukan",
+  "schemaVersion": "1.0.0",
+  "createdAt": "2026-09-14T20:00:00+09:00",
+  "files": [
+    "policy.json",
+    "personal-model.json",
+    "audit-model.json",
+    "analysis.md",
+    "schemas/taiseihoukan.schema.json"
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "1.0.0",
+  "strengths": [
+    "探索速度"
+  ],
+  "limitations": [
+    "新規対象への逸脱可能性"
+  ],
+  "environmentalFit": [
+    "裁量がある環境"
+  ],
+  "riskFactors": [
+    "短期的な評価変動"
+  ],
+  "uncertainties": [
+    "長期継続性"
+  ],
+  "confidence": {
+    "overall": 0.65
+  }
+}

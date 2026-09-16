@@ -1,0 +1,22 @@
+自由意志大政奉還 v1.3 反映手順
+
+1. このZIPの内容を既存リポジトリ直下へ上書きしてください。
+2. 既存の package-lock.json は削除しないでください。
+3. 次を実行してください。
+
+   npm run build
+   git add .
+   git commit -m "Add portable audit backup and dashboard"
+   git push
+
+主な変更:
+- taiseihoukan.zip は読み込み専用に変更
+- 現在の大政奉還 + 状態監査履歴のバックアップZIP import/export
+- 監査履歴ダッシュボード（日 / 週 / 月）
+- 主状態 / 副状態の頻度、状態遷移、直近傾向、集計値
+- 元の taiseihoukan.zip を可能な限りBlobのまま保持
+- バックアップ内 taiseihoukan.zip のSHA-256整合性確認
+
+注意:
+- IndexedDBは引き続き自動保存先ですが、端末間可搬性はバックアップZIPが担当します。
+- 履歴は次回監査のpriorへ自動反映しません。
