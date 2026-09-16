@@ -28,7 +28,7 @@ apps/*/manifest.json + runtime.js + app UI source/build
 - `gateway/`: one Node process. It discovers app manifests, owns common runs/events, provides SQLite, and delegates app resources/runs to a runtime. It does not know Character Chat fields.
 - `packages/app-protocol/`: protocol version, shared concepts, and error shape.
 - `packages/app-sdk/`: tiny helper for future app authors.
-- `apps/*/`: app-specific manifest, runtime, schema, prompts, and UI.
+- `apps/*/`: app-specific manifest, runtime, adapter, schema, prompts, and UI. Existing app ports may keep their upstream layout when that is safer; the boundary remains app-local.
 - `data/`: SQLite database and WAL files; ignored by git.
 
 ## Directory layout
@@ -60,6 +60,25 @@ Browser screenshots and temporary Chrome profiles are verification artifacts, no
 4. Gateway creates a run, invokes the app runtime with an abstract `AgentBackend`, stores events, and publishes them through `GET /api/runs/:id/events` using SSE.
 5. App-specific resources use the delegated namespace `/api/apps/:id/resources/*`; their schemas remain inside the app.
 
+## Existing app migration boundary
+
+An existing app is integrated by placing a thin adapter inside its own
+`apps/<id>/` directory. The adapter replaces direct Connector/LLM calls and
+device-local persistence with Gateway calls while preserving the upstream UI
+and domain behavior. New apps may use `adapter/`, `schema/`, and `prompts/`
+subdirectories; Challenge Tree keeps its upstream `src/` layout and places its
+two boundary adapters at `src/gateway.ts` and `src/db.ts`.
+
+The common layer is intentionally limited to the outer contract:
+
+```text
+manifest → run request → run status → event stream → artifact/resource URL
+```
+
+Run payloads, operation names, result schemas, and persistence tables are owned
+by the app runtime. This is what lets an existing app be ported without adding
+an app-specific Launcher screen or Gateway route.
+
 The Launcher also provides the common model settings screen at `/api/settings/agent`. The Gateway stores these settings in SQLite and creates a per-run Backend view with the selected model and reasoning effort, so app runtimes remain provider-agnostic.
 
 ## Responsibility audit
@@ -76,4 +95,10 @@ SQLite uses WAL mode. Runs and events are durable; active in-memory controllers 
 
 ## Adding a second app
 
-Create a directory under `apps/` with `manifest.json`, `runtime.js` exporting `createApp()`, and an entry UI. Restart Gateway. No launcher code or app-specific Gateway branch is required. `apps/demo-app` is the protocol smoke-test example and `apps/challenge-tree` is a larger app using app-owned SQLite resources. Challenge Tree source is built with `npm run build:challenge-tree`; Gateway serves its generated `dist/` entry.
+Create a directory under `apps/` with `manifest.json`, an entry UI, and a
+`runtime.js` exporting `createApp()` when Agent execution or persistence is
+needed. Keep any adapter, schema, and prompt changes in that directory. Restart
+Gateway. No Launcher code or app-specific Gateway branch is required.
+`apps/demo-app` is the protocol smoke-test example and `apps/challenge-tree` is
+a larger upstream port using app-owned SQLite resources. See
+[`docs/app-adapter-guide.md`](app-adapter-guide.md) for the migration checklist.

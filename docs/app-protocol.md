@@ -2,7 +2,7 @@
 
 Status: initial implemented contract.
 
-The protocol is deliberately app-neutral. Character, conversation, prompt, and message are not protocol concepts; they belong to `character-chat`.
+The protocol is deliberately app-neutral. Character, conversation, prompt, and message are not protocol concepts; they belong to `character-chat`. The same rule applies to every future app: the common protocol defines the run envelope, not the app's domain payload.
 
 ## App manifest
 
@@ -43,7 +43,7 @@ All responses are JSON unless the events endpoint is requested with `Accept: tex
 | PUT | `/api/settings/agent` | update Gateway-wide Agent model settings |
 | GET | `/api/settings/agent/models` | model catalog reported by the active backend (Codex CLI for `codex`) |
 
-App-owned resources, when declared, are delegated under `/api/apps/:id/resources/*`. The Gateway routes them but does not interpret their schema.
+App-owned resources, when declared, are delegated under `/api/apps/:id/resources/*`. The Gateway routes them but does not interpret their schema. Existing app ports should put the translation from their original Connector, IndexedDB, or API boundary into the app directory, not into the Launcher or common Gateway.
 
 ## Types
 
@@ -79,9 +79,15 @@ An app runtime exports `createApp({ db, store })`, returning:
 
 ```js
 {
-  async run(input, { backend, signal, emit, db, store }) { /* app-owned */ },
-  async resources({ method, path, body, query }) { /* optional */ }
+  async run(input, { backend, signal, emit, db, store }) { /* validate and execute app-owned input */ },
+  async resources({ method, path, body, query }) { /* optional app-owned storage */ }
 }
 ```
 
 `emit(type, data)` is the only way an app publishes run events. `backend` implements `stream(prompt, options)`, `cancel()`, and `health()`. The Gateway may also call the backend's optional `listModels()` for the global settings screen. Current adapters are `mock` and `codex-cli`; app code does not import or call Codex directly.
+
+For structured Agent results, the runtime is responsible for validating and
+normalizing its app-specific output before emitting `result.completed`. The
+Launcher must treat that result as opaque. If an adapter retries a malformed
+result, it should provide the failed output and validation paths to the Agent;
+`repair: true` without that context is not sufficient.
