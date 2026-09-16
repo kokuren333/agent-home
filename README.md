@@ -70,10 +70,20 @@ Invoke-WebRequest http://127.0.0.1:8787/api/health
 ### Evidence Based Slopedia
 
 根拠となるソースを調査して記事を作成する知識ポータルです。記事検索、記事カード、Articles・Newsのバックナンバー、記事作成キュー、今日のニュース生成、ソースURLと画像の保存に対応しています。
+[移植元リポジトリ](https://github.com/kokuren333/Evidence-Based-Slopedia)
 
 ### Challenge Tree
 
 学習テーマをツリー構造にして、問題を解きながら進める学習アプリです。AIによるツリー提案、説明式・短答式・正誤式の問題、回答採点、ノード追加・展開、学習データの保存・書き出しに対応しています。
+[移植元リポジトリ](https://github.com/kokuren333/ChallengeTree)
+
+### 自由意志大政奉還
+
+自由意志に関する情報を自分で記入・整理し、外部で作成した「大政奉還」データを読み込んで、現在の方針や状態を確認するためのアプリです。自由意志の入力、参考URL・文書の添付、ChatGPTへ渡すためのZIP書き出し、大政奉還ZIPの読み込み、状態監査、監査履歴の集計、バックアップの入出力に対応しています。
+
+このアプリ自体はLLMや外部AI APIを実行しません。自由意志の入力内容から大政奉還データを生成する処理や、Memoryをもとにした分析は、利用者がZIPをChatGPTなどの外部分析環境へ渡して行います。agent-homeへの移植版では、入力データと監査履歴をGatewayのアプリ専用SQLiteへ保存し、PCとスマートフォンで同じ状態を利用できます。
+
+[移植元リポジトリ](https://github.com/kokuren333/freewill-taiseihokan) ／ [公開ページ](https://kokuren333.github.io/freewill-taiseihokan/)
 
 ### Character Chat
 
