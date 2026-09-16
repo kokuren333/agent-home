@@ -77,7 +77,7 @@ export function AuditDashboard({ history, model }: { history: AuditHistoryEntry[
 
   if (!history.length) return <div className="stack-lg">
     <Panel><p className="eyebrow">AUDIT HISTORY</p><h1>監査履歴</h1><p>状態監査を実行すると、ここに日別・週別・月別の集計と状態傾向が表示されます。</p></Panel>
-    <Notice tone="info">監査履歴はブラウザ内のIndexedDBへ自動保存されます。端末間の移行やサイトデータ消去への備えには、バックアップZIPを書き出してください。</Notice>
+    <Notice tone="info">監査履歴はGatewayへ自動保存されます。端末間の移行には、必要に応じてバックアップZIPを書き出してください。</Notice>
   </div>;
 
   return <div className="stack-lg audit-dashboard">

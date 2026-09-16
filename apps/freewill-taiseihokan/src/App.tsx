@@ -4,7 +4,7 @@ import { DetailedForm, FreeWillReview, QuickForm } from './components/FreeWillFo
 import { AuditRunner, PolicyView } from './components/Taiseihoukan';
 import { AdviceView } from './components/AdviceView';
 import { AuditDashboard } from './components/AuditDashboard';
-import { loadAppState, saveAppState } from './lib/db';
+import { loadAppState, saveAppState } from '../adapter/storage';
 import { exportBackupZip, exportFreeWillZip, exportMemoryTaiseihoukanRequestZip, importBackupZip, importFreeWillZip, importTaiseihoukanZip } from './lib/zip';
 import type { AppState, AuditHistoryEntry, FreeWillData, TaiseihoukanData } from './types';
 

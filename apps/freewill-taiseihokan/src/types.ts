@@ -181,7 +181,7 @@ export interface AppState {
   initialized: boolean;
   freeWill: FreeWillData;
   taiseihoukan: TaiseihoukanData | null;
-  /** Original imported taiseihoukan.zip when available. Stored as a Blob in IndexedDB. */
+  /** Original imported taiseihoukan.zip when available. Persisted by the Gateway storage adapter. */
   taiseihoukanArchive: TaiseihoukanArchive | null;
   auditHistory: AuditHistoryEntry[];
 }

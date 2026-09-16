@@ -17,11 +17,25 @@ after(async () => { if (child && child.exitCode === null) { const exited = new P
 
 test('discovers apps from manifests, including the protocol-only demo app', async () => {
   const { response, data } = await request('/api/apps'); assert.equal(response.status, 200); const ids = data.map((app) => app.id);
-  for (const id of ['challenge-tree', 'character-chat', 'demo-app', 'evidence-based-slopedia']) assert.ok(ids.includes(id));
+  for (const id of ['challenge-tree', 'character-chat', 'demo-app', 'evidence-based-slopedia', 'freewill-taiseihokan']) assert.ok(ids.includes(id));
   assert.equal((await request('/api/apps/demo-app')).data.capabilities.includes('run'), true);
   assert.equal((await request('/api/apps/challenge-tree')).data.capabilities.includes('storage'), true);
   assert.equal((await request('/api/apps/evidence-based-slopedia')).data.capabilities.includes('resources'), true);
+  assert.deepEqual((await request('/api/apps/freewill-taiseihokan')).data.capabilities.sort(), ['resources', 'storage']);
   assert.equal((await fetch(base + '/ui/styles.css')).status, 200);
+});
+
+test('freewill taiseihokan stores app state through its Gateway resource', async () => {
+  const manifest = await request('/api/apps/freewill-taiseihokan');
+  assert.equal((await fetch(base + manifest.data.entry)).status, 200);
+  const resource = '/api/apps/freewill-taiseihokan/resources/state';
+  assert.equal((await request(resource)).data, null);
+  const state = { initialized: true, freeWill: { profile: { name: 'test' } }, taiseihoukan: null, taiseihoukanArchive: null, auditHistory: [] };
+  const saved = await request(resource, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(state) });
+  assert.deepEqual(saved.data, state);
+  assert.deepEqual((await request(resource)).data, state);
+  assert.equal((await request(resource, { method: 'DELETE' })).response.status, 204);
+  assert.equal((await request(resource)).data, null);
 });
 
 test('persists launcher app order without changing the app manifests', async () => {

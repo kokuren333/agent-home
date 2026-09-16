@@ -5,5 +5,5 @@
   "version": "1.3.0",
   "icon": "/apps/freewill-taiseihokan/assets-launcher-icon.png",
   "entry": "/apps/freewill-taiseihokan/dist/index.html",
-  "capabilities": []
+  "capabilities": ["storage", "resources"]
 }
