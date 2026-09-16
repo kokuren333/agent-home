@@ -98,7 +98,11 @@ export function createApp({ db, root, imageGenerator } = {}) {
       date,
       existingCount: generatedFields.size,
       activeCount: activeFields.size,
-      jobs: rows.map(publicJob),
+      jobs: rows.map((row) => {
+        const job = publicJob(row);
+        const article = newsEntryForJob(row);
+        return article ? { ...job, articlePath: article.path, imagePath: article.imagePath || null } : job;
+      }),
       complete: generatedFields.size >= NEWS_FIELDS.length,
       generating: generatedFields.size + activeFields.size >= NEWS_FIELDS.length && generatedFields.size < NEWS_FIELDS.length,
     };
@@ -145,8 +149,8 @@ export function createApp({ db, root, imageGenerator } = {}) {
     while (relative.startsWith('/')) relative = relative.slice(1);
     if (!relative || relative.includes('..') || !relative.toLowerCase().endsWith('.md')) return null;
     const file = pathModule.resolve(contentRoot, relative);
-    const publishedRoot = pathModule.resolve(contentRoot, '10_Published');
-    if (file !== publishedRoot && !file.startsWith(`${publishedRoot}${pathModule.sep}`) || !fs.existsSync(file)) return null;
+    const allowedRoots = ['10_Published', '11_Daily'].map((name) => pathModule.resolve(contentRoot, name));
+    if (!allowedRoots.some((root) => file.startsWith(`${root}${pathModule.sep}`)) || !fs.existsSync(file)) return null;
     const body = fs.readFileSync(file, 'utf8');
     const title = frontmatterValue(body, 'title') || pathModule.basename(file, '.md').split('__')[0];
     const date = frontmatterValue(body, 'date') || frontmatterValue(body, 'updated') || frontmatterValue(body, 'created') || '';
@@ -180,6 +184,12 @@ export function createApp({ db, root, imageGenerator } = {}) {
         imagePath: frontmatterValue(body, 'infographic_path'),
       };
     }).filter(Boolean).sort((a, b) => `${b.date}/${b.title}`.localeCompare(`${a.date}/${a.title}`));
+  }
+
+  function newsEntryForJob(job) {
+    if (job.job_type !== 'daily_news' || !GENERATED.includes(job.status)) return null;
+    const entries = archiveEntries('news').filter((entry) => entry.date === job.daily_date && entry.field === job.news_field);
+    return entries.find((entry) => !entry.path.endsWith(`/${job.daily_date}_${job.news_field}.md`)) || entries[0] || null;
   }
 
   function updateJob(id, status, phase, error = '') {

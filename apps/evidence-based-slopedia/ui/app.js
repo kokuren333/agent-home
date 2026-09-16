@@ -79,14 +79,16 @@
     if (!grid) return;
     const jobs = state?.jobs || [];
     const byField = new Map(jobs.filter((job) => job.newsField).map((job) => [job.newsField, job]));
-    const complete = Number(state?.complete || 0);
-    const active = Number(state?.active || 0);
+    const complete = Number(state?.existingCount || 0);
+    const active = Number(state?.activeCount || 0);
     if (progress) progress.textContent = `${complete}/10 完了・${active}件を処理中`;
     grid.innerHTML = NEWS_FIELDS.map((field, index) => {
       const job = byField.get(field);
-      const stateText = job ? statusLabel(job.status) : '未登録';
+      const stateText = job ? statusLabel(job.status, job.phase) : '未登録';
       const stateClass = job ? `news-${escapeHtml(job.status)}` : 'news-empty';
-      return `<article class="news-card ${stateClass}"><span class="news-number">${String(index + 1).padStart(2, '0')}</span><div><p>${escapeHtml(NEWS_LABELS[field])}</p><span>${escapeHtml(stateText)}</span></div></article>`;
+      const image = job?.imagePath ? `<img src="/apps/evidence-based-slopedia/${String(job.imagePath).split('/').map(encodeURIComponent).join('/')}" alt="">` : '';
+      const body = `<span class="news-number">${String(index + 1).padStart(2, '0')}</span>${image}<div><p>${escapeHtml(NEWS_LABELS[field])}</p><span>${escapeHtml(stateText)}</span>${job?.articlePath ? '<small>記事を読む ›</small>' : ''}</div>`;
+      return job?.articlePath ? `<a class="news-card ${stateClass}" href="./article.html?path=${encodeURIComponent(job.articlePath)}">${body}</a>` : `<article class="news-card ${stateClass}">${body}</article>`;
     }).join('');
   }
 

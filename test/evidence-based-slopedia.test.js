@@ -87,3 +87,26 @@ test('EBS queue deletion is limited to queued or failed jobs', async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('completed daily news exposes its article and image for the portal card', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'agent-home-ebs-news-card-'));
+  const db = new DatabaseSync(path.join(root, 'test.db'));
+  try {
+    const app = createApp({ db, root });
+    const queued = await app.run({ action: 'enqueue_daily_news', date: '2026-09-16' });
+    const jobId = queued.jobs.find((job) => job.newsField === 'Technology_AI').id;
+    const article = path.join(root, '11_Daily', '03_Technology_AI', '2026-09', '2026-09-16_Technology_AI__card.md');
+    await fs.mkdir(path.dirname(article), { recursive: true });
+    await fs.writeFile(article, '---\ntitle: AIニュース\ndate: 2026-09-16\nfield: Technology_AI\ninfographic_path: 50_Assets/Infographics/Daily/2026-09-16_Technology_AI.png\n---\n\n本文', 'utf8');
+    db.prepare("UPDATE ebs_jobs SET status='completed', phase='published' WHERE id=?").run(jobId);
+    const state = app.resources({ method: 'GET', path: '/daily_news_state', query: new URLSearchParams('date=2026-09-16') }).data;
+    const cardJob = state.jobs.find((job) => job.id === jobId);
+    assert.equal(cardJob.articlePath, '11_Daily/03_Technology_AI/2026-09/2026-09-16_Technology_AI__card.md');
+    assert.equal(cardJob.imagePath, '50_Assets/Infographics/Daily/2026-09-16_Technology_AI.png');
+    const opened = app.resources({ method: 'GET', path: '/article', query: new URLSearchParams(`path=${cardJob.articlePath}`) });
+    assert.equal(opened.status, 200);
+  } finally {
+    db.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
