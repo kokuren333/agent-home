@@ -15,7 +15,7 @@
   "home.sampleLabel": "Starter tree",
   "home.nodesSummary": "{nodes} nodes · {completed} complete",
   "home.localSave": "Local save",
-  "home.saved": "Saved locally",
+  "home.saved": "Saved to Gateway",
   "home.workspaceSaveHint": "All learning trees and answer history can be saved in one workspace file.",
   "home.connector": "Gateway",
   "home.connected": "Connected",
@@ -202,6 +202,6 @@
   "error.generic": "Something went wrong. Your local draft is safe; try again.",
   "error.connector": "Codex Connector is not running.",
   "error.invalidOutput": "Codex returned data that did not match the required format. Retry to repair it.",
-  "footer.local": "Local-first · Your progress stays in this browser",
+  "footer.local": "Local-first · Your progress is saved by Gateway",
   "footer.version": "v0.1"
 }

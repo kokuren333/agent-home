@@ -17,6 +17,22 @@ const subscribers = new Map();
 const REASONING_EFFORTS = new Set(['', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
 let modelCatalog = { models: [], fetchedAt: 0 };
 
+function orderedApps({ includeHidden = false } = {}) {
+  const entries = [...apps.values()];
+  const savedPositions = new Map(store.getAppOrder().map(({ appId, position }) => [appId, position]));
+  const discoveryPositions = new Map(entries.map((entry, index) => [entry.manifest.id, index]));
+  const hidden = new Set(store.getHiddenApps());
+  const ordered = entries.sort((a, b) => {
+    const aPosition = savedPositions.get(a.manifest.id);
+    const bPosition = savedPositions.get(b.manifest.id);
+    if (aPosition !== undefined || bPosition !== undefined) {
+      return (aPosition ?? Number.MAX_SAFE_INTEGER) - (bPosition ?? Number.MAX_SAFE_INTEGER);
+    }
+    return discoveryPositions.get(a.manifest.id) - discoveryPositions.get(b.manifest.id);
+  });
+  return includeHidden ? ordered.map((entry) => ({ ...entry, hidden: hidden.has(entry.manifest.id) })) : ordered.filter((entry) => !hidden.has(entry.manifest.id));
+}
+
 async function discoverApps() {
   const appsDir = path.join(ROOT, 'apps');
   for (const name of fs.readdirSync(appsDir, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name)) {
@@ -24,8 +40,19 @@ async function discoverApps() {
       const dir = path.join(appsDir, name);
       const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
       if (!isValidManifest(manifest)) throw new Error('invalid manifest');
-      const module = await import(`../apps/${name}/runtime.js`);
-      apps.set(manifest.id, { manifest, runtime: module.createApp({ db: store.db, store, imageGenerator }) });
+      const runtimeFile = path.join(dir, 'runtime.js');
+      let runtime = {};
+      if (fs.existsSync(runtimeFile)) {
+        const module = await import(`../apps/${name}/runtime.js?v=${Date.now()}`);
+        runtime = module.createApp({ db: store.db, store, imageGenerator, root: dir });
+      } else if (manifest.capabilities.includes('run') || manifest.capabilities.includes('resources')) {
+        throw new Error('runtime.js is required when run or resources capability is declared');
+      }
+      apps.set(manifest.id, { manifest, runtime });
+      if (typeof runtime.startWorker === 'function') {
+        const workerBackend = typeof backend.withSettings === 'function' ? backend.withSettings(store.getAgentSettings()) : backend;
+        runtime.startWorker({ backend: workerBackend, imageGenerator });
+      }
     } catch (error) { console.error(`Could not load app ${name}:`, error.message); }
   }
 }
@@ -73,7 +100,8 @@ function startRun(run, app) {
   })();
 }
 function serveStatic(req, res, pathname) {
-  const relative = pathname === '/' ? 'launcher/index.html' : pathname.replace(/^\//, '');
+  const relative = pathname === '/' ? 'launcher/index.html' : decodeURIComponent(pathname.replace(/^\//, ''));
+  if (relative.split('/').some((segment) => ['.git', '.env'].includes(segment.toLowerCase()))) return protocolError(res, 404, 'not_found', 'File not found');
   const target = path.resolve(ROOT, relative);
   const publicRoots = [path.join(ROOT, 'launcher'), path.join(ROOT, 'apps'), path.join(ROOT, 'ui'), path.join(ROOT, 'data', 'character-icons')];
   const isPublic = publicRoots.some((root) => target === root || target.startsWith(root + path.sep));
@@ -81,6 +109,11 @@ function serveStatic(req, res, pathname) {
   const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.webmanifest': 'application/manifest+json' };
   res.writeHead(200, { 'content-type': types[path.extname(target)] || 'application/octet-stream', 'cache-control': pathname.includes('/assets/') ? 'public, max-age=3600' : 'no-store' });
   fs.createReadStream(target).pipe(res);
+}
+function servePreview(res, filePath, pathname) {
+  const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.ico': 'image/x-icon' };
+  res.writeHead(200, { 'content-type': types[path.extname(filePath).toLowerCase()] || 'application/octet-stream', 'cache-control': 'no-store', 'x-agent-home-preview': 'true' });
+  fs.createReadStream(filePath).pipe(res);
 }
 
 async function handler(req, res) {
@@ -98,7 +131,27 @@ async function handler(req, res) {
       if (!REASONING_EFFORTS.has(reasoningEffort)) return protocolError(res, 400, 'invalid_input', 'reasoning effortが不正です');
       return json(res, 200, store.updateAgentSettings({ model, reasoningEffort }));
     }
-    if (pathname === '/api/apps' && method === 'GET') return json(res, 200, [...apps.values()].map(({ manifest }) => manifest));
+    if (pathname === '/api/apps/order' && method === 'GET') return json(res, 200, { appIds: orderedApps({ includeHidden: true }).map(({ manifest }) => manifest.id) });
+    if (pathname === '/api/apps/order' && method === 'PUT') {
+      const body = await readBody(req);
+      const appIds = body.appIds;
+      const installedIds = new Set(apps.keys());
+      if (!Array.isArray(appIds) || appIds.length !== installedIds.size || new Set(appIds).size !== installedIds.size || appIds.some((appId) => typeof appId !== 'string' || !installedIds.has(appId))) {
+        return protocolError(res, 400, 'invalid_app_order', 'appIdsにはインストール済みアプリを重複なくすべて指定してください');
+      }
+      return json(res, 200, { appIds: store.setAppOrder(appIds).map(({ appId }) => appId) });
+    }
+    if (pathname === '/api/apps/visibility' && method === 'GET') return json(res, 200, { hiddenAppIds: store.getHiddenApps() });
+    if (pathname === '/api/apps/visibility' && method === 'PUT') {
+      const body = await readBody(req);
+      const hiddenAppIds = body.hiddenAppIds;
+      const installedIds = new Set(apps.keys());
+      if (!Array.isArray(hiddenAppIds) || new Set(hiddenAppIds).size !== hiddenAppIds.length || hiddenAppIds.some((appId) => typeof appId !== 'string' || !installedIds.has(appId))) {
+        return protocolError(res, 400, 'invalid_app_visibility', 'hiddenAppIdsにはインストール済みアプリのIDだけを重複なく指定してください');
+      }
+      return json(res, 200, { hiddenAppIds: store.setHiddenApps(hiddenAppIds) });
+    }
+    if (pathname === '/api/apps' && method === 'GET') return json(res, 200, orderedApps({ includeHidden: url.searchParams.get('includeHidden') === 'true' }).map(({ manifest, hidden }) => hidden === undefined ? manifest : { ...manifest, hidden }));
     const appMatch = pathname.match(/^\/api\/apps\/([^/]+)(?:\/(.*))?$/);
     if (appMatch) {
       const app = apps.get(decodeURIComponent(appMatch[1])); const tail = appMatch[2] || '';

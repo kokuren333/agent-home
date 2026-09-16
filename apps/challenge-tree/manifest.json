@@ -3,7 +3,7 @@
   "name": "Challenge Tree",
   "description": "回答に応じて学習ツリーを育てる適応型の学習アプリです。",
   "version": "0.1.0",
-  "icon": "/apps/challenge-tree/dist/assets/challenge-tree-logo.svg",
+  "icon": "/apps/challenge-tree/assets/launcher-icon.png",
   "entry": "/apps/challenge-tree/dist/index.html",
   "capabilities": ["run", "stream", "cancel", "storage", "resources"]
 }

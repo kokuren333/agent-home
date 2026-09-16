@@ -1,7 +1,46 @@
-data/*.db
-data/*.db-*
+/data/*
+!/data/.gitkeep
+
+# Runtime state, databases, generated artifacts, and local diagnostics.
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.log
+*.log.*
+**/.cache/
+**/data/*
+!**/data/.gitkeep
+**/logs/*
+!**/logs/.gitkeep
+apps/evidence-based-slopedia/70_Logs/*
+!apps/evidence-based-slopedia/70_Logs/*/.gitkeep
+**/runtime-state/
+**/runtime-data/
+**/worktrees/
+**/.locks/*
+!**/.locks/.gitkeep
+
+# Build output is tracked only when it is the declared app entry (for example
+# Challenge Tree's dist/index.html). App-specific generated site output stays out.
+apps/evidence-based-slopedia/dist/
+apps/evidence-based-slopedia/generated/
+apps/evidence-based-slopedia/canonical/
+apps/evidence-based-slopedia/dist.tmp-*/
+apps/evidence-based-slopedia/dist.previous/
+
+# Local editor and operating-system files.
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
 node_modules/
 .env
+.env.*
+!.env.example
 
 # Temporary browser verification artifacts must stay outside the project.
 .chrome-*/

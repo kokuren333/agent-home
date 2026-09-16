@@ -11,5 +11,10 @@
     "build": "npm run build:challenge-tree",
     "test": "node --experimental-sqlite --test test/*.test.js"
   },
-  "engines": { "node": ">=22.5.0" }
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "dependencies": {
+    "katex": "^0.18.7"
+  }
 }

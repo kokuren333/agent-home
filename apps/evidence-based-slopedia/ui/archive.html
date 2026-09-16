@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Archive | Evidence Based Slopedia</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#main">本文へ移動</a>
+    <header class="site-header">
+      <div class="header-inner">
+        <a class="brand" href="./index.html" aria-label="Evidence Based Slopedia ホーム">
+          <span class="brand-mark">EBS</span><span class="brand-name">Evidence Based Slopedia</span>
+        </a>
+        <nav class="site-nav" aria-label="主なナビゲーション">
+          <a href="./archive.html?kind=articles">Articles</a>
+          <a href="./archive.html?kind=news">News</a>
+          <a href="./index.html#query">Query</a>
+          <a class="launcher-link" href="/">Launcherへ戻る</a>
+        </nav>
+      </div>
+    </header>
+    <main id="main" class="archive-page" tabindex="-1">
+      <div class="archive-heading">
+        <p class="kicker" id="archive-kicker">Archive</p>
+        <h1 id="archive-title">Articles</h1>
+        <p id="archive-description" class="archive-description"></p>
+      </div>
+      <div class="archive-controls" aria-label="年月選択">
+        <button id="previous-month" type="button">‹ 前月</button>
+        <label>表示する年月<input id="month-picker" type="month"></label>
+        <button id="next-month" type="button">次月 ›</button>
+      </div>
+      <div id="archive-content" aria-live="polite"><div class="empty-state">読み込み中…</div></div>
+      <section id="day-articles" class="day-articles" aria-live="polite" hidden></section>
+    </main>
+    <footer class="site-footer"><span>Evidence Based Slopedia</span><a href="./index.html">ホームへ戻る</a></footer>
+    <script src="./runtime.js?v=2"></script>
+    <script src="./archive.js?v=2"></script>
+  </body>
+</html>

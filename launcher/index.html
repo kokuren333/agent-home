@@ -16,10 +16,12 @@
       <div class="topbar-actions">
         <button id="agent-settings" class="ghost" type="button">モデル設定</button>
         <div id="health" class="status"><i></i>確認中</div>
+        <div id="backend-status" class="status backend-status"><i></i>Codex CLI確認中</div>
       </div>
     </header>
     <section>
-      <div class="section-head"><h2>アプリ</h2><button id="refresh" class="ghost" type="button">更新</button></div>
+      <div class="section-head"><h2>アプリ</h2><div class="section-actions"><button id="toggle-reorder" class="ghost" type="button">並び替え・表示設定</button><button id="refresh" class="ghost" type="button">更新</button></div></div>
+      <p id="apps-order-status" class="apps-order-status" role="status"></p>
       <div id="apps" class="app-grid"><div class="loading">アプリを読み込んでいます…</div></div>
     </section>
   </main>
@@ -52,6 +54,6 @@
       </div>
     </form>
   </dialog>
-  <script type="module" src="/launcher/app.js?v=3"></script>
+  <script type="module" src="/launcher/app.js?v=6"></script>
 </body>
 </html>

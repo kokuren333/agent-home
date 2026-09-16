@@ -15,7 +15,7 @@
   "home.sampleLabel": "スターターツリー",
   "home.nodesSummary": "{nodes} ノード · {completed} 完了",
   "home.localSave": "ローカルセーブ",
-  "home.saved": "このブラウザに保存済み",
+  "home.saved": "Gatewayに保存済み",
   "home.workspaceSaveHint": "すべての学習ツリーと回答履歴を、1つのワークスペースファイルに保存できます。",
   "home.connector": "Gateway",
   "home.connected": "接続済み",
@@ -202,6 +202,6 @@
   "error.generic": "問題が発生しました。下書きは保存されています。もう一度試してください。",
   "error.connector": "Codex Connectorが起動していません。",
   "error.invalidOutput": "Codexの返却データが必要な形式と一致しませんでした。再試行で修復します。",
-  "footer.local": "Local-first · 進捗はこのブラウザに保存されます",
+  "footer.local": "Local-first · 進捗はGatewayに保存されます",
   "footer.version": "v0.1"
 }

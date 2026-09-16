@@ -1,0 +1,9 @@
+{
+  "id": "evidence-based-slopedia",
+  "name": "Evidence Based Slopedia",
+  "description": "Evidence・引用・監査にもとづく記事作成キューです。",
+  "version": "0.1.0",
+  "icon": "/apps/evidence-based-slopedia/assets/launcher-icon.png",
+  "entry": "/apps/evidence-based-slopedia/ui/index.html",
+  "capabilities": ["run", "resources"]
+}

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>記事検索 | Evidence Based Slopedia</title>
+    <link rel="stylesheet" href="./styles.css?v=4">
+  </head>
+  <body>
+    <a class="skip-link" href="#main">本文へ移動</a>
+    <header class="site-header"><div class="header-inner">
+      <a class="brand" href="./index.html" aria-label="Evidence Based Slopedia ホーム"><span class="brand-mark">EBS</span><span class="brand-name">Evidence Based Slopedia</span></a>
+      <nav class="site-nav" aria-label="主なナビゲーション"><a href="./archive.html?kind=articles">Articles</a><a href="./archive.html?kind=news">News</a><a href="./index.html#query">Query</a><a class="launcher-link" href="/">Launcherへ戻る</a></nav>
+    </div></header>
+    <main id="main" class="portal search-page" tabindex="-1">
+      <section class="archive-heading"><p class="kicker">Search</p><h1>記事検索</h1>
+        <form id="search-form" class="hero-search" role="search"><label class="sr-only" for="search-input">記事を検索</label><input id="search-input" type="search" placeholder="記事を検索" autocomplete="off"><button type="submit">検索</button></form>
+      </section>
+      <section class="portal-section" aria-labelledby="results-title"><div class="section-heading"><div><p class="kicker">Results</p><h2 id="results-title">検索結果</h2></div><span id="result-count" class="section-index"></span></div><div id="search-results" class="article-results" aria-live="polite"><div class="empty-state">検索中…</div></div></section>
+    </main>
+    <footer class="site-footer"><span>Evidence Based Slopedia</span><a href="/">Launcherへ戻る</a></footer>
+    <script src="./runtime.js?v=4"></script><script src="./search.js?v=1"></script>
+  </body>
+</html>

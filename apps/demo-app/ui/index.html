@@ -1,1 +1,22 @@
-<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/ui/styles.css"><title>Hello Agent</title></head><body><main class="shell"><h1>Hello Agent</h1><p class="sub">Character Chatと同じApp Protocolで動く、最小の第二アプリです。</p><button id="run" class="ghost" style="margin-top:28px">Agentを実行</button><pre id="output" style="white-space:pre-wrap;color:#bae6fd;margin-top:20px"></pre><p><a href="/" style="color:#7dd3fc">‹ Launcherへ戻る</a></p></main><script>document.querySelector('#run').onclick=async()=>{const out=document.querySelector('#output');const r=await (await fetch('/api/apps/demo-app/runs',{method:'POST',headers:{'content-type':'application/json'},body:'{}'})).json();const s=new EventSource('/api/runs/'+r.id+'/events');s.addEventListener('message.delta',e=>out.textContent+=JSON.parse(e.data).text);s.addEventListener('run.completed',()=>s.close())}</script></body></html>
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="/ui/styles.css">
+  <link rel="stylesheet" href="/apps/demo-app/ui/styles.css">
+  <title>Hello Agent</title>
+</head>
+<body>
+  <main class="demo-shell">
+    <header class="demo-header"><div><p class="eyebrow">APP PROTOCOL SAMPLE</p><h1>Hello Agent</h1><p>自由入力をAgentへ送り、返答を表示します。</p></div><a href="/">Launcherへ戻る</a></header>
+    <section class="demo-panel" aria-labelledby="input-title">
+      <h2 id="input-title">入力</h2>
+      <form id="message-form"><textarea id="message" maxlength="4000" required placeholder="Agentに送る内容を入力"></textarea><div class="form-row"><span>最大4,000文字</span><button type="submit">送信</button></div></form>
+    </section>
+    <section class="demo-panel" aria-labelledby="response-title"><div class="panel-heading"><h2 id="response-title">返答</h2><span id="run-status" role="status"></span></div><div id="response" class="response" aria-live="polite">まだ返答はありません。</div></section>
+    <section class="demo-panel history-panel" aria-labelledby="history-title"><div class="panel-heading"><h2 id="history-title">履歴</h2><button id="clear-history" class="secondary" type="button">履歴を消去</button></div><div id="history" class="history">読み込み中…</div></section>
+  </main>
+  <script type="module" src="/apps/demo-app/ui/app.js"></script>
+</body>
+</html>

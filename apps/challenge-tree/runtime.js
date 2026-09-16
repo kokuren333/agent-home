@@ -46,7 +46,9 @@ export function createApp({ db }) {
     return { id, title, description, goal, status: 'unlocked', xp: 0, masteryState: 'familiar', prerequisites: [], children: [], resourceIds: [], challengeIds: [], position, createdAt: iso(), updatedAt: iso() };
   }
   function challenge(id, nodeId, prompt, mode = 'explain') {
-    return { id, nodeId, promptStyle: 'why', difficulty: 1, prompt, expectedConcepts: ['中心概念', '理由', '具体例'], modelAnswer: `${prompt} 要点と理由を、自分の言葉で説明します。`, explanation: '要点だけでなく、なぜそうなるかまで確認します。', rubric: [{ criterion: '中心概念を説明する', required: true }], commonMisconceptions: [], resourceIds: [], createdAt: iso(), mode, questions: [{ id: `${id}-q1`, prompt, modelAnswer: '中心概念と理由を説明する。', expectedConcepts: ['中心概念'], explanation: '中心概念が説明できているか確認します。' }] };
+    const count = mode === 'true_false' ? 5 : mode === 'short_answer' ? 3 : 1;
+    const questions = Array.from({ length: count }, (_, index) => ({ id: `${id}-q${index + 1}`, prompt: mode === 'true_false' ? `${prompt}。正しいか誤りか答えてください。` : mode === 'short_answer' ? `${prompt}（短く答えてください）` : prompt, modelAnswer: mode === 'true_false' ? (index % 2 === 0 ? 'true' : 'false') : mode === 'short_answer' ? '中心概念の要点。' : '中心概念と理由を説明する。', expectedConcepts: ['中心概念'], explanation: '回答の根拠と要点を確認します。' }));
+    return { id, nodeId, promptStyle: 'why', difficulty: 1, prompt, expectedConcepts: ['中心概念', '理由', '具体例'], modelAnswer: `${prompt} 要点と理由を、自分の言葉で説明します。`, explanation: '要点だけでなく、なぜそうなるかまで確認します。', rubric: [{ criterion: '中心概念を説明する', required: true }], commonMisconceptions: [], resourceIds: [], createdAt: iso(), mode, questions };
   }
   function resource(id, title, url, supports = []) { return { id, title, url, language: 'ja', type: 'article', authorityTier: 'B', guidance: '概要と一次情報を確認してください。', supports, verifiedAt: iso() }; }
 
@@ -62,7 +64,7 @@ export function createApp({ db }) {
     if (operation === 'tree_propose') {
       return { proposals: [0, 1, 2].map((index) => {
         const root = node(`node-${randomUUID()}`, `${topic}：${['基礎から理解する', '仕組みから掘り下げる', '実践から身につける'][index]}`, `${topic}を${['基本概念', '構造', '実例'][index]}の観点から整理します。`, `${topic}の重要な考え方を説明できる。`, { x: 70, y: 270 });
-        return { id: `proposal-${randomUUID()}`, title: `${topic}：${['基礎から理解する', '仕組みから掘り下げる', '実践から身につける'][index]}`, philosophy: ['まず全体像をつかみ、段階的に深める構成です。', '内部の関係を追いながら理解する構成です。', '手を動かして具体例から一般化する構成です。'][index], learnerProfile: '全体像を整理しながら自分の言葉で理解したい人。', branches: ['基本概念', '仕組み', '応用'], advantages: ['順序が明確', '復習しやすい'], tradeoffs: '最初から細部まで扱う構成ではありません。', root, initialNodes: [root], initialEdges: [], resources: [], challenges: [challenge(`challenge-${randomUUID()}`, root.id, `${topic}の中心的な考え方を説明してください.`)] };
+        return { id: `proposal-${randomUUID()}`, title: `${topic}：${['基礎から理解する', '仕組みから掘り下げる', '実践から身につける'][index]}`, philosophy: ['まず全体像をつかみ、段階的に深める構成です。', '内部の関係を追いながら理解する構成です。', '手を動かして具体例から一般化する構成です。'][index], learnerProfile: '全体像を整理しながら自分の言葉で理解したい人。', branches: ['基本概念', '仕組み', '応用'], advantages: ['順序が明確', '復習しやすい'], tradeoffs: '最初から細部まで扱う構成ではありません。', root, initialNodes: [root], initialEdges: [], resources: [], challenges: [challenge(`challenge-${randomUUID()}`, root.id, `${topic}の中心的な考え方を説明してください.`, input.challengeMode || 'explain')] };
       }) };
     }
     const parent = input.node?.id || input.workspace?.tree?.rootNodeId || 'root';
@@ -79,13 +81,36 @@ export function createApp({ db }) {
     if (start >= 0 && end > start) { try { return JSON.parse(value.slice(start, end + 1)); } catch {} }
     throw new Error('Codexの結果をJSONとして解釈できませんでした');
   }
+  function outputSources(value) {
+    const found = [];
+    const visit = (item) => {
+      if (!item || typeof item !== 'object') return;
+      if (Array.isArray(item)) { for (const child of item) visit(child); return; }
+      if (typeof item.url === 'string' && /^https?:\/\//i.test(item.url)) found.push({ title: typeof item.title === 'string' && item.title.trim() ? item.title : item.url, url: item.url });
+      for (const child of Object.values(item)) visit(child);
+    };
+    visit(value);
+    return found.filter((source, index) => found.findIndex((item) => item.url === source.url) === index);
+  }
+  function textSources(text) {
+    return [...String(text || '').matchAll(/https?:\/\/[^\s"'<>`]+/g)]
+      .map((match) => match[0].replace(/[),.]+$/, ''))
+      .filter((url, index, urls) => urls.indexOf(url) === index)
+      .map((url) => ({ title: url, url }));
+  }
   function promptFor(operation, input) {
-    const base = 'あなたはChallenge Treeの学習データ生成エンジンです。入力を尊重し、指定されたJSONだけを返してください。Markdownやコードフェンスは不要です。日本語で出力してください。';
-    if (operation === 'answer_grade') return `${base}\n回答を採点してください。gradeはC/B/A/S、recommendedActionはretry/deepen/repair/branchです。JSON: {"grade":"B","summary":"","correct":[],"missing":[],"misconceptions":[],"nuance":[],"recommendedAction":"deepen","recommendedNodeIds":[],"nextStep":""}\n問題:${JSON.stringify(input.challenge)}\n回答:${String(input.answer || '')}`;
-    if (operation === 'challenge_create') return `${base}\n次のノードについて1問作成してください。JSON: {"id":"challenge-id","nodeId":"${input.node?.id || 'node-id'}","promptStyle":"why","difficulty":1,"prompt":"","expectedConcepts":[],"modelAnswer":"","explanation":"","rubric":[],"commonMisconceptions":[],"resourceIds":[],"createdAt":"${iso()}"}\n${JSON.stringify(input)}`;
-    if (operation === 'node_create') return `${base}\n新しい学習ノードと問題を1つ作成してください。JSON: {"node":{"id":"node-id","title":"","description":"","goal":""},"resources":[],"challenges":[{"id":"challenge-id","nodeId":"node-id","promptStyle":"why","difficulty":1,"prompt":"","expectedConcepts":[],"modelAnswer":"","explanation":"","rubric":[],"commonMisconceptions":[],"resourceIds":[],"createdAt":"${iso()}"}]}\n${JSON.stringify(input)}`;
+    let base = 'あなたはChallenge Treeの学習データ生成エンジンです。入力を尊重し、指定されたJSONだけを返してください。Markdownやコードフェンスは不要です。日本語で出力してください。このタスクでは、最初にWeb検索ツールを最低1回呼び出してください。Web検索を実行せずに最終JSONを出力してはいけません。信頼できる一次情報・公式ドキュメント・大学や公的機関の資料を優先し、検索結果を確認したうえで学習内容を作成してください。確認したURLをresourcesに反映し、問題のresourceIdsから参照してください。検索ツールを利用できない場合は、内容を推測で埋めず、空のJSONを返してください。';
+    const mode = ['explain', 'short_answer', 'true_false'].includes(input.challengeMode) ? input.challengeMode : 'explain';
+    const modeRule = mode === 'explain' ? 'challengeModeはexplain。questionsは1件だけにし、自由記述で理由や具体例を答える問題にする。' : mode === 'short_answer' ? 'challengeModeはshort_answer。questionsは必ず3件にし、各promptは短答を求める。' : 'challengeModeはtrue_false。questionsは必ず5件にし、各promptは正誤判定可能な命題にする。各modelAnswerは文字列trueまたはfalseにする。';
+    const modeContract = `選択された問題形式を厳守すること。${modeRule} challengeのmodeには必ず"${mode}"を入れる。`;
+    base += `\n${modeContract}`;
+    if (operation === 'answer_grade') return `${base}\n${modeContract}\n回答を採点してください。gradeはC/B/A/S、recommendedActionはretry/deepen/repair/branchです。JSON: {"grade":"B","summary":"","correct":[],"missing":[],"misconceptions":[],"nuance":[],"recommendedAction":"deepen","recommendedNodeIds":[],"nextStep":""}\n問題:${JSON.stringify(input.challenge)}\n回答:${String(input.answer || '')}`;
+    if (operation === 'research') return `${base}\n入力テーマについてWeb検索を実行し、検索結果から確認できた資料を3件以内で返してください。検索ツールを呼び出した後、URLは実際に確認したものだけを使ってください。JSON: {"sources":[{"title":"","url":"https://example.com"}]}\n${JSON.stringify(input)}`;
+    if (operation === 'challenge_create') return `${base}\n入力に含まれるresourcesとそのURLを確認したうえで、次のノードについて1問作成してください。問題のresourceIdsには、根拠として使った入力resourcesのIDを必ず入れてください。JSON: {"id":"challenge-id","nodeId":"${input.node?.id || 'node-id'}","promptStyle":"why","difficulty":1,"prompt":"","expectedConcepts":[],"modelAnswer":"","explanation":"","rubric":[],"commonMisconceptions":[],"resourceIds":["resource-id"],"createdAt":"${iso()}"}\n${JSON.stringify(input)}`;
+    if (operation === 'node_create') return `${base}\n検索で確認した出典を根拠に、新しい学習ノードと問題を1つ作成してください。resourcesには確認したURLを1件以上、challenges[0].resourceIdsにはそのresourceのIDを入れてください。JSON: {"node":{"id":"node-id","title":"","description":"","goal":""},"resources":[{"id":"resource-id","title":"","url":"https://example.com","language":"ja","type":"official_docs","authorityTier":"A","guidance":"","supports":["node-id"]}],"challenges":[{"id":"challenge-id","nodeId":"node-id","promptStyle":"why","difficulty":1,"prompt":"","expectedConcepts":[],"modelAnswer":"","explanation":"","rubric":[],"commonMisconceptions":[],"resourceIds":["resource-id"],"createdAt":"${iso()}"}]}\n${JSON.stringify(input)}`;
+    if (operation === 'tree_propose') return `${base}\nまず入力テーマを検索して、各案の入口ノードと最初の問題をその検索結果から設計してください。学習ツリーの入口を3案作ってください。各案はrootとinitialNodesを含め、initialNodesには完全なNode形式を1つ入れてください。各案にchallengesを必ず1件以上入れ、その問題はrootのnodeIdを持ち、resourcesには検索で確認したURLを1件以上入れ、問題のresourceIdsから参照してください。JSON: {"proposals":[{"id":"proposal-id","title":"","philosophy":"","learnerProfile":"","branches":[],"advantages":[],"tradeoffs":"","root":{},"initialNodes":[],"initialEdges":[],"resources":[{"id":"resource-id","title":"","url":"https://example.com","language":"ja","type":"official_docs","authorityTier":"A","guidance":"","supports":["node-id"]}],"challenges":[{"id":"challenge-id","nodeId":"node-id","promptStyle":"why","difficulty":1,"prompt":"","expectedConcepts":[],"modelAnswer":"","explanation":"","rubric":[],"commonMisconceptions":[],"resourceIds":["resource-id"],"createdAt":"${iso()}"}]}]}\n${JSON.stringify(input)}`;
     if (operation === 'tree_propose') return `${base}\n学習ツリーの入口を3案作ってください。各案はrootとinitialNodesを含め、initialNodesには完全なNode形式を1つ入れてください。JSON: {"proposals":[{"id":"proposal-id","title":"","philosophy":"","learnerProfile":"","branches":[],"advantages":[],"tradeoffs":"","root":{},"initialNodes":[],"initialEdges":[],"resources":[],"challenges":[]}]}\n${JSON.stringify(input)}`;
-    return `${base}\n指定ノードから${Number(input.branchCount) || 3}個の子ノードを作成してください。JSON: {"nodes":[],"edges":[],"resources":[],"challenges":[]}。nodesとedgesとchallengesは同じ個数にしてください。${JSON.stringify(input)}`;
+    return `${base}\n事前調査で確認済みのverifiedResourcesを根拠に、指定ノードから${Number(input.branchCount) || 3}個の子ノードを作成してください。各子ノードに対応する問題を1つずつ作り、resourcesにはverifiedResourcesから使ったURLを含め、各問題のresourceIdsにそのIDを入れてください。JSON: {"nodes":[],"edges":[],"resources":[],"challenges":[]}。nodesとedgesとchallengesは同じ個数にしてください。${JSON.stringify(input)}`;
   }
 
   async function run(input, { backend, signal, emit }) {
@@ -95,7 +120,44 @@ export function createApp({ db }) {
     emit('progress', { operation, message: '生成しています…' });
     let result = backend.name === 'mock' ? mockResult(operation, payload) : null;
     let research = { searchCalls: 0, searches: [], sources: [], logs: [] };
-    if (backend.name !== 'mock') { let output = ''; for await (const delta of backend.stream(promptFor(operation, payload), { signal, webSearch: true })) { output += delta; emit('message.delta', { operation, text: delta }); } if (signal.aborted) return; result = extractJson(output); if (typeof backend.getLastResearch === 'function') research = backend.getLastResearch(); }
+    if (backend.name !== 'mock') {
+      let researchEvidence = { searchCalls: 0, searches: [], sources: [], logs: [] };
+      let generationPayload = payload;
+      if (['tree_propose', 'node_create', 'node_expand'].includes(operation)) {
+        emit('progress', { operation, message: '出典を調査しています…' });
+        let researchOutput = '';
+        for await (const delta of backend.stream(promptFor('research', payload), { signal, webSearch: true })) researchOutput += delta;
+        if (signal.aborted) return;
+        const firstRunResearch = typeof backend.getLastResearch === 'function' ? backend.getLastResearch() : researchEvidence;
+        let researchedSources = [];
+        try { researchedSources = outputSources(extractJson(researchOutput)); } catch { researchedSources = textSources(researchOutput); }
+        researchedSources = [...researchedSources, ...firstRunResearch.sources].filter((source, index, items) => items.findIndex((item) => item.url === source.url) === index);
+        if (firstRunResearch.searchCalls < 1 || researchedSources.length < 1) throw new Error('Web検索で確認できる出典を取得できなかったため、学習データは保存しません。');
+        researchEvidence = { ...firstRunResearch, sources: researchedSources };
+        generationPayload = { ...payload, verifiedResources: researchedSources };
+      }
+      let output = '';
+      for await (const delta of backend.stream(promptFor(operation, generationPayload), { signal, webSearch: true })) { output += delta; emit('message.delta', { operation, text: delta }); }
+      if (signal.aborted) return;
+      result = extractJson(output);
+      const generationResearch = typeof backend.getLastResearch === 'function' ? backend.getLastResearch() : researchEvidence;
+      research = {
+        searchCalls: researchEvidence.searchCalls + generationResearch.searchCalls,
+        searches: [...new Set([...researchEvidence.searches, ...generationResearch.searches])],
+        sources: [...researchEvidence.sources, ...generationResearch.sources],
+        logs: [...researchEvidence.logs, ...generationResearch.logs],
+      };
+      // The structured result is the app's durable source of truth. Preserve
+      // URLs even when a particular Codex CLI version labels tool events
+      // differently and the event inspector cannot see them.
+      const structuredSources = outputSources(result);
+      research = { ...research, sources: [...research.sources, ...structuredSources].filter((source, index, items) => items.findIndex((item) => item.url === source.url) === index) };
+      // Do not silently accept an unsourced learning artifact. The UI should
+      // never look complete when the question was only improvised by the LLM.
+      if (['tree_propose', 'node_create', 'node_expand'].includes(operation) && (research.searchCalls < 1 || research.sources.length < 1)) {
+        throw new Error('Web検索の実行結果を確認できなかったため、出典なしの学習データは保存しません。');
+      }
+    }
     emit('result.completed', { operation, result, research });
   }
 
@@ -119,7 +181,13 @@ export function createApp({ db }) {
     }
     const workspace = getWorkspace(id);
     if (method === 'GET') return workspace ? { status: 200, data: workspace } : { status: 404, data: { error: { code: 'not_found', message: 'Workspace not found' } } };
-    if (method === 'PUT') return workspace ? { status: 200, data: saveWorkspace(body, id) } : { status: 404, data: { error: { code: 'not_found', message: 'Workspace not found' } } };
+    if (method === 'PUT') {
+      if (!body?.project || typeof body.project !== 'object') return { status: 400, data: { error: { code: 'invalid_input', message: 'workspace.project is required' } } };
+      // PUT is an idempotent workspace replacement. It must also create the
+      // resource so first-run samples and restored workspaces can use one
+      // persistence path across devices.
+      return { status: workspace ? 200 : 201, data: saveWorkspace(body, id) };
+    }
     if (method === 'DELETE') { db.prepare('DELETE FROM challenge_tree_snapshots WHERE project_id=?').run(id); db.prepare('DELETE FROM challenge_tree_workspaces WHERE id=?').run(id); return { status: 204, data: null }; }
     return { status: 405, data: { error: { code: 'method_not_allowed', message: 'Method not allowed' } } };
   }

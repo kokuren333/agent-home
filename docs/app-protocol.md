@@ -45,6 +45,16 @@ All responses are JSON unless the events endpoint is requested with `Accept: tex
 
 App-owned resources, when declared, are delegated under `/api/apps/:id/resources/*`. The Gateway routes them but does not interpret their schema. Existing app ports should put the translation from their original Connector, IndexedDB, or API boundary into the app directory, not into the Launcher or common Gateway.
 
+## Installing an app
+
+An installable app is a self-contained directory under `apps/<id>/` containing
+`manifest.json` and the declared `entry` file. Apps that declare `run` or
+`resources` must also contain `runtime.js`; a static-only app may omit it.
+Copying that directory into `apps/` and restarting the Gateway is the complete
+installation operation. The manifest is discovered automatically; no Launcher
+code change is needed. The sample `apps/demo-app/` implements every capability
+in this document and is the reference fixture for new app ports.
+
 ## Types
 
 ```ts

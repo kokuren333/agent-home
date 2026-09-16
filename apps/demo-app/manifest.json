@@ -1,9 +1,9 @@
 {
   "id": "demo-app",
   "name": "Hello Agent",
-  "description": "App Protocol v0.1の最小サンプルアプリです。",
+  "description": "自由入力をAgentへ送り、返答を表示するApp Protocolサンプルです。",
   "version": "0.1.0",
   "icon": "/apps/demo-app/ui/app-icon.png",
   "entry": "/apps/demo-app/ui/index.html",
-  "capabilities": ["run", "stream"]
+  "capabilities": ["run", "stream", "cancel", "storage", "resources"]
 }

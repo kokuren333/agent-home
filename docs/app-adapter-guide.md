@@ -1,7 +1,9 @@
 # Existing app adapter guide
 
 This is the standard for bringing an existing web app into `agent-home` without
-making the Launcher or Gateway app-specific.
+making the Launcher or Gateway app-specific. The Launcher has no repository
+import wizard; use the reviewed, preservation-first process in
+[`agent-porting-guide.md`](agent-porting-guide.md).
 
 ## Core rule
 

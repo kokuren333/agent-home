@@ -195,7 +195,7 @@ export interface Workspace {
   draftAnswers: Record<string, string>
 }
 
-/** A portable workspace file can contain every learning tree in the browser. */
+/** A portable workspace file can contain every learning tree stored by Gateway. */
 export interface WorkspaceBundle {
   formatVersion: number
   appVersion: string

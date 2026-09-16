@@ -26,6 +26,16 @@ function splitMetadata(value: string) {
   return value.split(/[\n,、]/).map((item) => item.trim()).filter(Boolean)
 }
 
+function ensureChallengeMode(challenge: Challenge, mode: ChallengeMode): Challenge {
+  const count = mode === 'true_false' ? 5 : mode === 'short_answer' ? 3 : 1
+  const questions = challenge.questions?.length ? challenge.questions.slice(0, count) : []
+  while (questions.length < count) {
+    const index = questions.length
+    questions.push({ id: `${challenge.id}-q${index + 1}`, prompt: mode === 'true_false' ? `${challenge.prompt}。正しいか誤りか答えてください。` : mode === 'short_answer' ? `${challenge.prompt}（短く答えてください）` : challenge.prompt, modelAnswer: mode === 'true_false' ? 'false' : challenge.modelAnswer, expectedConcepts: challenge.expectedConcepts, explanation: challenge.explanation })
+  }
+  return { ...challenge, mode, ...(mode === 'explain' ? {} : { questions }) }
+}
+
 function rectanglesOverlap(left: { x: number; y: number }, right: { x: number; y: number }) {
   return Math.abs(left.x - right.x) < NODE_WIDTH + NODE_GAP && Math.abs(left.y - right.y) < NODE_HEIGHT + NODE_GAP
 }
@@ -267,9 +277,22 @@ export default function App() {
     const rootCandidate = proposal.initialNodes.find((item) => item.id === proposal.root.id) ?? proposal.initialNodes[0]
     if (!rootCandidate) { setError(tr('error.invalidOutput')); return }
     const rootId = rootCandidate.id
-    const rootChallenges = (proposal.challenges ?? []).filter((item) => item.nodeId === rootId).slice(0, 1)
-    const rootResourceIds = new Set(rootChallenges.flatMap((item) => item.resourceIds))
-    const rootResources = (proposal.resources ?? []).filter((item) => rootResourceIds.has(item.id))
+    const proposalResources = proposal.resources ?? []
+    const candidateChallenges = (proposal.challenges ?? []).filter((item) => item.nodeId === rootId).slice(0, 1)
+    const rootResourceIds = new Set(candidateChallenges.flatMap((item) => item.resourceIds))
+    const linkedResources = rootResourceIds.size
+      ? proposalResources.filter((item) => rootResourceIds.has(item.id))
+      : proposalResources.filter((item) => item.supports.includes(rootId)).slice(0, 8)
+    // Keep the source visible even when the model returned a valid resource
+    // but forgot the optional supports/resourceIds linkage.
+    const rootResources = linkedResources.length ? linkedResources : proposalResources.slice(0, 8)
+    const rootChallenges = candidateChallenges.map((item) => ({
+      ...ensureChallengeMode(item, createForm.challengeMode),
+      resourceIds: item.resourceIds.length ? item.resourceIds.filter((id) => rootResources.some((resource) => resource.id === id)) : rootResources.map((resource) => resource.id),
+    }))
+    const researchEvidence = proposalResearchRef.current
+      ? { ...proposalResearchRef.current, sources: [...proposalResearchRef.current.sources, ...rootResources.map((item) => ({ title: item.title, url: item.url }))] }
+      : null
     const root: NodeRecord = {
       ...rootCandidate, id: rootId, status: 'unlocked', xp: 0, masteryState: 'familiar', prerequisites: [], children: [],
       resourceIds: rootResources.map((item) => item.id), challengeIds: rootChallenges.map((item) => item.id), position: { x: 70, y: 270 }, createdAt: rootCandidate.createdAt ?? now, updatedAt: now,
@@ -278,7 +301,7 @@ export default function App() {
       formatVersion: 1, appVersion: '0.1.0', schemaVersion: 1, connectorProtocolVersion: '1',
       project: { id: crypto.randomUUID(), title: proposal.title, topic: createForm.topic.trim(), goal: createForm.goal.trim(), researchMode: createForm.researchMode, challengeMode: createForm.challengeMode, curriculumContext: proposalContext(proposal), createdAt: now, updatedAt: now },
       tree: { rootNodeId: rootId, nodes: { [rootId]: root }, edges: [] }, challenges: rootChallenges, attempts: [], resources: rootResources,
-      research: proposalResearchRef.current ? [researchRecord('tree_propose', `${createForm.topic.trim()} / ${createForm.goal.trim()}`, createForm.researchMode, proposalResearchRef.current, { resourceIds: rootResources.map((item) => item.id), summary: 'ツリー作成前の領域調査' })] : [], settings,
+      research: researchEvidence ? [researchRecord('tree_propose', `${createForm.topic.trim()} / ${createForm.goal.trim()}`, createForm.researchMode, researchEvidence, { resourceIds: rootResources.map((item) => item.id), summary: 'ツリー作成前の領域調査' })] : [], settings,
       stats: { totalXp: 0, totalChallenges: 0, gradeDistribution: [0, 0, 0, 0], sessionXp: 0 }, draftAnswers: {},
     }
     // Make the new project the active target before persist() so a proposal
@@ -623,7 +646,7 @@ export default function App() {
   if (screen === 'create') return <><CreateScreen lang={lang} tr={tr} mode={createMode} setMode={setCreateMode} form={createForm} setForm={setCreateForm} manualForm={manualForm} setManualForm={setManualForm} busy={busy === 'propose' || busy === 'manual-create'} error={error} onSubmit={handlePropose} onManualSubmit={handleManualCreate} onCancel={goHome} connectorStatus={connectorStatus} />{(busy === 'propose' || busy === 'manual-create') && <div className="create-progress-floating"><GradingLog items={gradingLog} label={busy === 'manual-create' ? 'ツリーを作成中' : 'ツリーを調査中'} /></div>}</>
   if (screen === 'proposals') return <><ProposalScreen lang={lang} tr={tr} proposals={proposals} topic={createForm.topic} busy={busy === 'save'} error={error} onChoose={chooseProposal} onBack={() => setScreen('create')} /></>
   if (screen === 'tree' && workspace) return <>
-    <TreeScreen workspace={workspace} lang={lang} tr={tr} selectedNodeId={selectedNodeId} setSelectedNodeId={setSelectedNodeId} connectorStatus={connectorStatus} nodeBusy={nodeBusy} lastGrades={lastGrades} nodeGradingLogs={nodeGradingLogs} error={error} notice={notice} onBack={goHome} onSettings={() => setSettingsOpen(true)} onImport={() => fileInputRef.current?.click()} onExport={exportWorkspace} onDraft={setDraft} onCreateChallenge={createChallenge} onSubmit={submitAnswer} onExpand={expandNode} onManualNode={createManualNode} onRetry={() => { if (selectedNodeId) setNodeGrade(workspace.project.id, selectedNodeId, null) }} onRefreshConnector={refresh} onClearMessage={() => { setError(''); setNotice('') }} />
+    <TreeScreen workspace={workspace} lang={lang} tr={tr} selectedNodeId={selectedNodeId} setSelectedNodeId={setSelectedNodeId} connectorStatus={connectorStatus} nodeBusy={nodeBusy} lastGrades={lastGrades} nodeGradingLogs={nodeGradingLogs} error={error} notice={notice} onBack={goHome} onSettings={() => setSettingsOpen(true)} onImport={() => fileInputRef.current?.click()} onExport={exportWorkspace} onDraft={setDraft} onCreateChallenge={createChallenge} onSubmit={submitAnswer} onExpand={expandNode} onManualNode={createManualNode} onMoveNode={(nodeId, position) => persistProject(workspace.project.id, (current) => ({ ...current, tree: { ...current.tree, nodes: { ...current.tree.nodes, [nodeId]: { ...current.tree.nodes[nodeId], position, updatedAt: new Date().toISOString() } } } }), 'move-node')} onRetry={() => { if (selectedNodeId) setNodeGrade(workspace.project.id, selectedNodeId, null) }} onRefreshConnector={refresh} onClearMessage={() => { setError(''); setNotice('') }} />
      {settingsOpen && <SettingsModal settings={settings} lang={lang} tr={tr} onClose={() => setSettingsOpen(false)} onSave={updateSettings} />}
   </>
   return <>
@@ -687,43 +710,135 @@ function ChallengeModePicker({ lang, value, onChange }: { lang: UiLanguage; valu
   return <section className="challenge-mode-picker"><p className="eyebrow">{lang === 'ja' ? '問題形式' : 'Challenge format'}</p><div className="challenge-mode-options">{options.map(([mode, title, hint]) => <label key={mode} className={`challenge-mode-option ${value === mode ? 'selected' : ''}`}><input type="radio" name="challenge-mode" checked={value === mode} onChange={() => onChange(mode)} /><span className="mode-choice-mark" aria-hidden="true" /><span className="mode-choice-copy"><strong>{title}</strong><small>{hint}</small></span></label>)}</div></section>
 }
 
-function TreeScreen({ workspace, lang, tr, selectedNodeId, setSelectedNodeId, connectorStatus, nodeBusy, lastGrades, nodeGradingLogs, error, notice, onBack, onSettings, onImport, onExport, onDraft, onCreateChallenge, onSubmit, onExpand, onManualNode, onRetry, onRefreshConnector, onClearMessage }: { workspace: Workspace; lang: UiLanguage; tr: (key: string, vars?: Record<string, string | number>) => string; selectedNodeId: string | null; setSelectedNodeId: (id: string | null) => void; connectorStatus: ConnectorStatus; nodeBusy: Record<string, NodeOperation>; lastGrades: Record<string, LastGrade | null>; nodeGradingLogs: Record<string, string[]>; error: string; notice: string; onBack: () => void; onSettings: () => void; onImport: () => void; onExport: () => void; onDraft: (id: string, answer: string) => Promise<void>; onCreateChallenge: (node: NodeRecord) => Promise<void>; onSubmit: (node: NodeRecord, challenge: Challenge, answer: string) => Promise<void>; onExpand: (node: NodeRecord, branchCount?: number) => Promise<void>; onManualNode: (title: string, position: { x: number; y: number }) => Promise<void>; onRetry: () => void; onRefreshConnector: () => void; onClearMessage: () => void }) {
+function TreeScreen({ workspace, lang, tr, selectedNodeId, setSelectedNodeId, connectorStatus, nodeBusy, lastGrades, nodeGradingLogs, error, notice, onBack, onSettings, onImport, onExport, onDraft, onCreateChallenge, onSubmit, onExpand, onManualNode, onMoveNode, onRetry, onRefreshConnector, onClearMessage }: { workspace: Workspace; lang: UiLanguage; tr: (key: string, vars?: Record<string, string | number>) => string; selectedNodeId: string | null; setSelectedNodeId: (id: string | null) => void; connectorStatus: ConnectorStatus; nodeBusy: Record<string, NodeOperation>; lastGrades: Record<string, LastGrade | null>; nodeGradingLogs: Record<string, string[]>; error: string; notice: string; onBack: () => void; onSettings: () => void; onImport: () => void; onExport: () => void; onDraft: (id: string, answer: string) => Promise<void>; onCreateChallenge: (node: NodeRecord) => Promise<void>; onSubmit: (node: NodeRecord, challenge: Challenge, answer: string) => Promise<void>; onExpand: (node: NodeRecord, branchCount?: number) => Promise<void>; onManualNode: (title: string, position: { x: number; y: number }) => Promise<void>; onMoveNode: (nodeId: string, position: { x: number; y: number }) => Promise<void>; onRetry: () => void; onRefreshConnector: () => void; onClearMessage: () => void }) {
   const [query, setQuery] = useState('')
   const progress = getProgress(workspace.tree)
   const selected = selectedNodeId ? workspace.tree.nodes[selectedNodeId] : undefined
   const matchedIds = query.trim() ? new Set(Object.values(workspace.tree.nodes).filter((node) => `${node.title} ${node.description} ${node.goal}`.toLowerCase().includes(query.toLowerCase()) || workspace.resources.some((resource) => node.resourceIds.includes(resource.id) && resource.title.toLowerCase().includes(query.toLowerCase()))).map((node) => node.id)) : null
-  return <div className="app-frame tree-frame"><Header lang={lang} tr={tr} connectorStatus={connectorStatus} onBack={onBack} onImport={onImport} onExport={onExport} onSettings={onSettings} /><div className="tree-layout"><aside className="tree-sidebar"><div className="project-title"><p className="eyebrow">{tr('tree.eyebrow')}</p><h1>{workspace.project.title}</h1><p>{workspace.project.goal}</p></div><div className="progress-block"><div className="progress-label"><span>{tr('tree.progress', { completed: progress.completed, total: progress.total })}</span><strong>{progress.percentage}%</strong></div><div className="progress-track"><span style={{ width: `${progress.percentage}%` }} /></div><div className="progress-foot"><span>{progress.earnedXp} / {progress.possibleXp} {tr('tree.xp')}</span></div></div><label className="search-field"><Icon name="search" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={tr('tree.search')} /></label><section className="legend"><h2>{tr('tree.legend')}</h2>{(['current', 'incomplete', 'completed'] as const).map((state) => <div key={state}><span className={`legend-mark state-${state}`} /> <span>{tr(`tree.${state}`)}</span></div>)}</section><div className="sidebar-footer"><button className="text-button" onClick={onRefreshConnector}><span className={`status-dot ${connectorStatus.connected ? 'good' : 'muted'}`} /> {connectorStatus.connected && connectorStatus.authenticated ? tr('home.connected') : tr('home.notRunning')}</button></div></aside><main className="map-main"><div className="map-heading"><div><span className="research-tag">{workspace.project.researchMode === 'ja' ? tr('create.ja') : tr('create.global')}</span><span className="map-hint">{tr('tree.selectHint')}</span></div></div>{(error || notice) && <div className={error ? 'message-banner error' : 'message-banner'} role="status"><span>{error || notice}</span><button onClick={onClearMessage} aria-label={tr('nav.close')}><Icon name="close" /></button></div>}<SkillMap workspace={workspace} selectedNodeId={selectedNodeId} setSelectedNodeId={setSelectedNodeId} matchedIds={matchedIds} tr={tr} onManualNode={onManualNode} /></main><aside className="node-sidebar">{selected ? <NodePanel workspace={workspace} node={selected} tr={tr} connectorStatus={connectorStatus} busy={nodeBusy[projectNodeKey(workspace.project.id, selected.id)] || ''} gradingLog={nodeGradingLogs[projectNodeKey(workspace.project.id, selected.id)] || []} lastGrade={lastGrades[projectNodeKey(workspace.project.id, selected.id)] || null} onDraft={onDraft} onCreateChallenge={onCreateChallenge} onSubmit={onSubmit} onExpand={onExpand} onRetry={onRetry} onOpenNode={setSelectedNodeId} /> : <div className="node-empty"><Icon name="branch" /><p>{tr('tree.selectHint')}</p></div>}</aside></div></div>
+  return <div className="app-frame tree-frame"><Header lang={lang} tr={tr} connectorStatus={connectorStatus} onBack={onBack} onImport={onImport} onExport={onExport} onSettings={onSettings} /><div className="tree-layout"><aside className="tree-sidebar"><div className="project-title"><p className="eyebrow">{tr('tree.eyebrow')}</p><h1>{workspace.project.title}</h1><p>{workspace.project.goal}</p></div><div className="progress-block"><div className="progress-label"><span>{tr('tree.progress', { completed: progress.completed, total: progress.total })}</span><strong>{progress.percentage}%</strong></div><div className="progress-track"><span style={{ width: `${progress.percentage}%` }} /></div><div className="progress-foot"><span>{progress.earnedXp} / {progress.possibleXp} {tr('tree.xp')}</span></div></div><label className="search-field"><Icon name="search" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={tr('tree.search')} /></label><section className="legend"><h2>{tr('tree.legend')}</h2>{(['current', 'incomplete', 'completed'] as const).map((state) => <div key={state}><span className={`legend-mark state-${state}`} /> <span>{tr(`tree.${state}`)}</span></div>)}</section><div className="sidebar-footer"><button className="text-button" onClick={onRefreshConnector}><span className={`status-dot ${connectorStatus.connected ? 'good' : 'muted'}`} /> {connectorStatus.connected && connectorStatus.authenticated ? tr('home.connected') : tr('home.notRunning')}</button></div></aside><main className="map-main"><div className="map-heading"><div><span className="research-tag">{workspace.project.researchMode === 'ja' ? tr('create.ja') : tr('create.global')}</span><span className="map-hint">{tr('tree.selectHint')}</span></div></div>{(error || notice) && <div className={error ? 'message-banner error' : 'message-banner'} role="status"><span>{error || notice}</span><button onClick={onClearMessage} aria-label={tr('nav.close')}><Icon name="close" /></button></div>}<SkillMap workspace={workspace} selectedNodeId={selectedNodeId} setSelectedNodeId={setSelectedNodeId} matchedIds={matchedIds} tr={tr} onManualNode={onManualNode} onMoveNode={onMoveNode} /></main><aside className="node-sidebar">{selected ? <NodePanel workspace={workspace} node={selected} tr={tr} connectorStatus={connectorStatus} busy={nodeBusy[projectNodeKey(workspace.project.id, selected.id)] || ''} gradingLog={nodeGradingLogs[projectNodeKey(workspace.project.id, selected.id)] || []} lastGrade={lastGrades[projectNodeKey(workspace.project.id, selected.id)] || null} onDraft={onDraft} onCreateChallenge={onCreateChallenge} onSubmit={onSubmit} onExpand={onExpand} onRetry={onRetry} onOpenNode={setSelectedNodeId} /> : <div className="node-empty"><Icon name="branch" /><p>{tr('tree.selectHint')}</p></div>}</aside></div></div>
 }
 
-function SkillMap({ workspace, selectedNodeId, setSelectedNodeId, matchedIds, tr, onManualNode }: { workspace: Workspace; selectedNodeId: string | null; setSelectedNodeId: (id: string) => void; matchedIds: Set<string> | null; tr: (key: string, vars?: Record<string, string | number>) => string; onManualNode: (title: string, position: { x: number; y: number }) => Promise<void> }) {
-  return <ZoomableMap workspace={workspace} selectedNodeId={selectedNodeId} setSelectedNodeId={setSelectedNodeId} matchedIds={matchedIds} tr={tr} onManualNode={onManualNode} />
+function SkillMap({ workspace, selectedNodeId, setSelectedNodeId, matchedIds, tr, onManualNode, onMoveNode }: { workspace: Workspace; selectedNodeId: string | null; setSelectedNodeId: (id: string) => void; matchedIds: Set<string> | null; tr: (key: string, vars?: Record<string, string | number>) => string; onManualNode: (title: string, position: { x: number; y: number }) => Promise<void>; onMoveNode: (nodeId: string, position: { x: number; y: number }) => Promise<void> }) {
+  return <><ManualNodeLauncher tr={tr} onManualNode={onManualNode} /><ZoomableMap workspace={workspace} selectedNodeId={selectedNodeId} setSelectedNodeId={setSelectedNodeId} matchedIds={matchedIds} tr={tr} onManualNode={onManualNode} onMoveNode={onMoveNode} /></>
 }
 
-function ZoomableMap({ workspace, selectedNodeId, setSelectedNodeId, matchedIds, tr, onManualNode }: { workspace: Workspace; selectedNodeId: string | null; setSelectedNodeId: (id: string) => void; matchedIds: Set<string> | null; tr: (key: string, vars?: Record<string, string | number>) => string; onManualNode: (title: string, position: { x: number; y: number }) => Promise<void> }) {
-  const [zoom, setZoom] = useState(1)
+function ManualNodeLauncher({ tr, onManualNode }: { tr: (key: string, vars?: Record<string, string | number>) => string; onManualNode: (title: string, position: { x: number; y: number }) => Promise<void> }) {
+  const [open, setOpen] = useState(false)
+  const [title, setTitle] = useState('')
+  const [busy, setBusy] = useState(false)
+  const submit = () => { if (!title.trim() || busy) return; setBusy(true); void onManualNode(title.trim(), { x: 520, y: 250 }).finally(() => { setBusy(false); setOpen(false); setTitle('') }) }
+  return <div className="manual-node-launcher"><button type="button" className="add-node-button" onClick={() => setOpen(true)}>{tr('tree.manualNodeTitle')}</button>{open && <div className="manual-node-backdrop" role="presentation"><section className="manual-node-dialog" role="dialog" aria-modal="true"><h2>{tr('tree.manualNodeTitle')}</h2><p>{tr('tree.manualNodeHint')}</p><input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') submit() }} /><div className="modal-actions"><button className="secondary-button" disabled={busy} onClick={() => setOpen(false)}>{tr('create.cancel')}</button><button className="primary-button" disabled={busy || !title.trim()} onClick={submit}>{busy ? tr('node.saving') : tr('tree.manualNodeCreate')}</button></div></section></div>}</div>
+}
+
+function ZoomableMap({ workspace, selectedNodeId, setSelectedNodeId, matchedIds, tr, onManualNode, onMoveNode }: { workspace: Workspace; selectedNodeId: string | null; setSelectedNodeId: (id: string) => void; matchedIds: Set<string> | null; tr: (key: string, vars?: Record<string, string | number>) => string; onManualNode: (title: string, position: { x: number; y: number }) => Promise<void>; onMoveNode: (nodeId: string, position: { x: number; y: number }) => Promise<void> }) {
+  // A fixed 1600px viewBox makes a single node unreadably small on a phone.
+  // Start mobile at a readable scale; users can still zoom out for a larger
+  // tree; touch gestures provide zoom and panning without extra controls.
+  const defaultZoom = typeof window !== 'undefined' && window.matchMedia('(max-width: 600px)').matches ? 2.2 : 1
+  const [zoom, setZoom] = useState(defaultZoom)
   const [pan, setPan] = useState({ x: 0, y: 0 })
-  const [dragging, setDragging] = useState(false)
-  const [lastPoint, setLastPoint] = useState({ x: 0, y: 0 })
+  const [dragPositions, setDragPositions] = useState<Record<string, { x: number; y: number }>>({})
   const [manualPosition, setManualPosition] = useState<{ x: number; y: number } | null>(null)
   const [manualTitle, setManualTitle] = useState('')
   const [manualBusy, setManualBusy] = useState(false)
+  const mapRef = useRef<HTMLDivElement>(null)
+  const pointersRef = useRef(new Map<number, { x: number; y: number }>())
+  const gestureRef = useRef<{ kind: 'pan' | 'pinch'; last: { x: number; y: number }; startDistance?: number; startMidpoint?: { x: number; y: number }; startZoom?: number; startPan?: { x: number; y: number } } | null>(null)
+  const dragRef = useRef<{ nodeId: string; startX: number; startY: number; startPosition: { x: number; y: number }; currentPosition: { x: number; y: number }; moved: boolean } | null>(null)
+  const suppressClickRef = useRef(false)
   const visibleNodes = Object.values(workspace.tree.nodes).filter((node) => !node.archived && node.status !== 'hidden' && (!matchedIds || matchedIds.has(node.id)))
   const layoutPositions = getTreeLayout(workspace.tree)
-  const point = (id: string) => layoutPositions[id] ?? workspace.tree.nodes[id]?.position ?? { x: 100, y: 100 }
+  const point = (id: string) => dragPositions[id] ?? layoutPositions[id] ?? workspace.tree.nodes[id]?.position ?? { x: 100, y: 100 }
   const updateZoom = (delta: number) => setZoom((value) => Math.max(.55, Math.min(2.2, Number((value + delta).toFixed(2)))))
   const handleWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
     event.preventDefault()
     event.stopPropagation()
     updateZoom(event.deltaY > 0 ? -.1 : .1)
   }
+  const toViewBoxPoint = (clientX: number, clientY: number) => {
+    const svg = mapRef.current?.querySelector('svg')
+    if (!svg) return { x: clientX, y: clientY }
+    const rect = svg.getBoundingClientRect()
+    return { x: (clientX - rect.left) / rect.width * 1600, y: (clientY - rect.top) / rect.height * 620 }
+  }
+  const distance = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y)
+  const midpoint = (a: { x: number; y: number }, b: { x: number; y: number }) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 })
+  const startPinch = () => {
+    const [first, second] = [...pointersRef.current.values()]
+    if (!first || !second) return
+    gestureRef.current = { kind: 'pinch', last: midpoint(first, second), startDistance: distance(first, second), startMidpoint: midpoint(first, second), startZoom: zoom, startPan: pan }
+  }
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    // A node click must remain a click. Capturing the pointer on the map
-    // surface here used to retarget the event and prevented unlocked nodes
-    // from changing the selected panel.
-    if (event.target instanceof Element && event.target.closest('.map-node')) return
-    setDragging(true)
-    setLastPoint({ x: event.clientX, y: event.clientY })
-    event.currentTarget.setPointerCapture(event.pointerId)
+    const target = event.target instanceof Element ? event.target : null
+    if (target?.closest('.map-controls')) return
+    pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+    try { event.currentTarget.setPointerCapture(event.pointerId) } catch { /* capture can fail after a browser gesture ends */ }
+    const node = target?.closest('.map-node')
+    if (node) {
+      const nodeId = node.getAttribute('data-node-id')
+      if (!nodeId) return
+      const startPosition = point(nodeId)
+      setSelectedNodeId(nodeId)
+      dragRef.current = { nodeId, startX: event.clientX, startY: event.clientY, startPosition, currentPosition: startPosition, moved: false }
+      gestureRef.current = null
+      return
+    }
+    dragRef.current = null
+    if (pointersRef.current.size === 2) startPinch()
+    else gestureRef.current = { kind: 'pan', last: { x: event.clientX, y: event.clientY } }
+  }
+  const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!pointersRef.current.has(event.pointerId)) return
+    pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+    if (pointersRef.current.size >= 2) {
+      const [first, second] = [...pointersRef.current.values()]
+      const gesture = gestureRef.current
+      if (!gesture || gesture.kind !== 'pinch' || !gesture.startDistance || !gesture.startMidpoint || !gesture.startPan || !gesture.startZoom) { startPinch(); return }
+      const currentMidpoint = midpoint(first, second)
+      const nextZoom = Math.max(.55, Math.min(2.2, gesture.startZoom * (distance(first, second) / gesture.startDistance)))
+      const startView = toViewBoxPoint(gesture.startMidpoint.x, gesture.startMidpoint.y)
+      const currentView = toViewBoxPoint(currentMidpoint.x, currentMidpoint.y)
+      const anchored = { x: (startView.x - gesture.startPan.x) / gesture.startZoom, y: (startView.y - gesture.startPan.y) / gesture.startZoom }
+      setZoom(Number(nextZoom.toFixed(2)))
+      setPan({ x: currentView.x - nextZoom * anchored.x, y: currentView.y - nextZoom * anchored.y })
+      return
+    }
+    const drag = dragRef.current
+    if (drag) {
+      const svg = mapRef.current?.querySelector('svg')
+      const rect = svg?.getBoundingClientRect()
+      if (!rect) return
+      const dx = (event.clientX - drag.startX) / rect.width * 1600 / zoom
+      const dy = (event.clientY - drag.startY) / rect.height * 620 / zoom
+      if (!drag.moved && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) > 4) drag.moved = true
+      drag.currentPosition = { x: drag.startPosition.x + dx, y: drag.startPosition.y + dy }
+      setDragPositions((current) => ({ ...current, [drag.nodeId]: drag.currentPosition }))
+      return
+    }
+    if (gestureRef.current?.kind === 'pan') {
+      const svg = mapRef.current?.querySelector('svg')
+      const rect = svg?.getBoundingClientRect()
+      if (!rect) return
+      const last = gestureRef.current.last
+      setPan((current) => ({ x: current.x + (event.clientX - last.x) / rect.width * 1600, y: current.y + (event.clientY - last.y) / rect.height * 620 }))
+      gestureRef.current.last = { x: event.clientX, y: event.clientY }
+    }
+  }
+  const handlePointerEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current
+    if (drag && drag.nodeId && pointersRef.current.size === 1) {
+      if (drag.moved) { suppressClickRef.current = true; void onMoveNode(drag.nodeId, drag.currentPosition) }
+      dragRef.current = null
+    }
+    pointersRef.current.delete(event.pointerId)
+    try { event.currentTarget.releasePointerCapture(event.pointerId) } catch { /* already released */ }
+    if (pointersRef.current.size === 1) {
+      const [remaining] = [...pointersRef.current.values()]
+      gestureRef.current = { kind: 'pan', last: remaining }
+    } else if (pointersRef.current.size === 0) {
+      gestureRef.current = null
+      dragRef.current = null
+    }
   }
   const handleContextMenu = (event: React.MouseEvent<HTMLDivElement>) => {
     if (event.target instanceof Element && event.target.closest('.map-node, .map-controls')) return
@@ -736,7 +851,8 @@ function ZoomableMap({ workspace, selectedNodeId, setSelectedNodeId, matchedIds,
     setManualPosition({ x: (x - pan.x) / zoom, y: (y - pan.y) / zoom })
     setManualTitle('')
   }
-  return <><div className="map-surface" onContextMenu={handleContextMenu} onWheel={handleWheel} onPointerDown={handlePointerDown} onPointerMove={(event) => { if (!dragging) return; setPan((value) => ({ x: value.x + event.clientX - lastPoint.x, y: value.y + event.clientY - lastPoint.y })); setLastPoint({ x: event.clientX, y: event.clientY }) }} onPointerUp={() => setDragging(false)} onPointerCancel={() => setDragging(false)}><div className="map-controls" onPointerDown={(event) => event.stopPropagation()}><button type="button" onClick={() => updateZoom(.1)} aria-label="拡大">＋</button><span>{Math.round(zoom * 100)}%</span><button type="button" onClick={() => updateZoom(-.1)} aria-label="縮小">−</button><button type="button" onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }) }} aria-label="表示をリセット">↺</button></div><svg viewBox="0 0 1600 620" role="img" aria-label={tr('tree.eyebrow')}><defs><pattern id="grid-zoom" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(169,184,182,.06)" strokeWidth="1" /></pattern></defs><rect width="1600" height="620" fill="url(#grid-zoom)" /><g transform={`translate(${pan.x} ${pan.y}) scale(${zoom})`}>{workspace.tree.edges.map((edge) => { const from = point(edge.from); const to = point(edge.to); const visible = visibleNodes.some((item) => item.id === edge.from) && visibleNodes.some((item) => item.id === edge.to); return <line key={`${edge.from}-${edge.to}`} className={`tree-edge ${visible ? '' : 'edge-hidden'}`} x1={from.x + 92} y1={from.y + 38} x2={to.x + 10} y2={to.y + 38} /> })}{visibleNodes.map((node) => <MapNode key={node.id} node={node} position={point(node.id)} selected={node.id === selectedNodeId} tr={tr} onSelect={() => setSelectedNodeId(node.id)} />)}</g></svg>{visibleNodes.length === 0 && <div className="map-empty">{tr('tree.searchEmpty')}</div>}</div>{manualPosition && <div className="manual-node-backdrop" role="presentation"><section className="manual-node-dialog" role="dialog" aria-modal="true"><h2>{tr('tree.manualNodeTitle')}</h2><p>{tr('tree.manualNodeHint')}</p><input autoFocus value={manualTitle} onChange={(event) => setManualTitle(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && manualTitle.trim()) { event.preventDefault(); setManualBusy(true); void onManualNode(manualTitle, manualPosition).finally(() => { setManualBusy(false); setManualPosition(null) }) } }} /><div className="modal-actions"><button className="secondary-button" disabled={manualBusy} onClick={() => setManualPosition(null)}>{tr('create.cancel')}</button><button className="primary-button" disabled={manualBusy || !manualTitle.trim()} onClick={() => { setManualBusy(true); void onManualNode(manualTitle, manualPosition).finally(() => { setManualBusy(false); setManualPosition(null) }) }}>{manualBusy ? tr('node.saving') : tr('tree.manualNodeCreate')}</button></div></section></div>}</>
+  const openManualNode = () => { setManualPosition({ x: 520 - pan.x / zoom, y: 250 - pan.y / zoom }); setManualTitle('') }
+  return <><div ref={mapRef} className="map-surface" onContextMenu={handleContextMenu} onWheel={handleWheel} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerEnd} onPointerCancel={handlePointerEnd}><div className="map-gesture-hint">ピンチで拡大・スワイプで移動・ノードをドラッグ</div><svg viewBox="0 0 1600 620" role="img" aria-label={tr('tree.eyebrow')}><defs><pattern id="grid-zoom" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(169,184,182,.06)" strokeWidth="1" /></pattern></defs><rect width="1600" height="620" fill="url(#grid-zoom)" /><g transform={`translate(${pan.x} ${pan.y}) scale(${zoom})`}>{workspace.tree.edges.map((edge) => { const from = point(edge.from); const to = point(edge.to); const visible = visibleNodes.some((item) => item.id === edge.from) && visibleNodes.some((item) => item.id === edge.to); return <line key={`${edge.from}-${edge.to}`} className={`tree-edge ${visible ? '' : 'edge-hidden'}`} x1={from.x + 92} y1={from.y + 38} x2={to.x + 10} y2={to.y + 38} /> })}{visibleNodes.map((node) => <MapNode key={node.id} node={node} position={point(node.id)} selected={node.id === selectedNodeId} tr={tr} onSelect={() => { if (suppressClickRef.current) { suppressClickRef.current = false; return } setSelectedNodeId(node.id) }} />)}</g></svg>{visibleNodes.length === 0 && <div className="map-empty">{tr('tree.searchEmpty')}</div>}</div>{manualPosition && <div className="manual-node-backdrop" role="presentation"><section className="manual-node-dialog" role="dialog" aria-modal="true"><h2>{tr('tree.manualNodeTitle')}</h2><p>{tr('tree.manualNodeHint')}</p><input autoFocus value={manualTitle} onChange={(event) => setManualTitle(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && manualTitle.trim()) { event.preventDefault(); setManualBusy(true); void onManualNode(manualTitle, manualPosition).finally(() => { setManualBusy(false); setManualPosition(null) }) } }} /><div className="modal-actions"><button className="secondary-button" disabled={manualBusy} onClick={() => setManualPosition(null)}>{tr('create.cancel')}</button><button className="primary-button" disabled={manualBusy || !manualTitle.trim()} onClick={() => { setManualBusy(true); void onManualNode(manualTitle, manualPosition).finally(() => { setManualBusy(false); setManualPosition(null) }) }}>{manualBusy ? tr('node.saving') : tr('tree.manualNodeCreate')}</button></div></section></div>}</>
 }
 
 function MapNode({ node, position, selected, tr, onSelect }: { node: NodeRecord; position: { x: number; y: number }; selected: boolean; tr: (key: string, vars?: Record<string, string | number>) => string; onSelect: () => void }) {
@@ -745,7 +861,7 @@ function MapNode({ node, position, selected, tr, onSelect }: { node: NodeRecord;
   const label = tr(`tree.${statusKey}`)
   const xp = completed ? Math.min(node.xp, 100) : 0
   const handleKey = (event: KeyboardEvent<SVGGElement>) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelect() } }
-  return <g className={`map-node state-${statusKey} ${selected ? 'selected' : ''}`} transform={`translate(${position.x}, ${position.y})`} onClick={onSelect} onKeyDown={handleKey} tabIndex={0} role="button" aria-label={`${node.title}, ${label}`}><rect className="node-back" width="184" height="76" rx="4" />{node.status === 'cleared' && <path className={node.masteryState === 'mastered' ? 'node-crown' : 'node-check'} d={node.masteryState === 'mastered' ? 'M14 38l3-6 4 4 4-6 4 8' : 'M14 38l4 4 8-9'} />}{node.status === 'unlocked' && <circle cx="20" cy="38" r="3" className="node-dot" />}<foreignObject x="40" y="10" width="136" height="42"><div className="node-title-wrap">{node.title}</div></foreignObject><text className="node-state" x="40" y="64">{label} · {xp} XP</text></g>
+  return <g className={`map-node state-${statusKey} ${selected ? 'selected' : ''}`} data-node-id={node.id} transform={`translate(${position.x}, ${position.y})`} onClick={onSelect} onKeyDown={handleKey} tabIndex={0} role="button" aria-label={`${node.title}, ${label}`}><rect className="node-back" width="184" height="76" rx="4" />{node.status === 'cleared' && <path className={node.masteryState === 'mastered' ? 'node-crown' : 'node-check'} d={node.masteryState === 'mastered' ? 'M14 38l3-6 4 4 4-6 4 8' : 'M14 38l4 4 8-9'} />}{node.status === 'unlocked' && <circle cx="20" cy="38" r="3" className="node-dot" />}<foreignObject x="40" y="10" width="136" height="42"><div className="node-title-wrap">{node.title}</div></foreignObject><text className="node-state" x="40" y="64">{label} · {xp} XP</text></g>
 }
 
 function NodePanel({ workspace, node, tr, connectorStatus, busy, gradingLog, lastGrade, onDraft, onCreateChallenge, onSubmit, onExpand, onRetry, onOpenNode }: { workspace: Workspace; node: NodeRecord; tr: (key: string, vars?: Record<string, number | string>) => string; connectorStatus: ConnectorStatus; busy: string; gradingLog: string[]; lastGrade: LastGrade | null; onDraft: (id: string, answer: string) => Promise<void>; onCreateChallenge: (node: NodeRecord) => Promise<void>; onSubmit: (node: NodeRecord, challenge: Challenge, answer: string) => Promise<void>; onExpand: (node: NodeRecord, branchCount?: number) => Promise<void>; onRetry: () => void; onOpenNode: (id: string) => void }) {

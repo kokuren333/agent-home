@@ -2,7 +2,7 @@
 
 ## Goal
 
-`agent-home` is a small, single-process personal agent launcher intended for an always-on low-spec PC. A Tailscale HTTPS reverse proxy can expose the single HTTP port to a phone. The server has no local LLM, vector database, Redis, Postgres, or other resident service dependency.
+`agent-home` is a small, single-process personal agent launcher intended for an always-on low-spec PC. Tailscale Serve (or another HTTPS reverse proxy) can expose the single HTTP port to a phone. The server has no local LLM, vector database, Redis, Postgres, or other resident service dependency.
 
 Challenge Tree integration is based on the upstream repository [`kokuren333/ChallengeTree`](https://github.com/kokuren333/ChallengeTree). The upstream React/Vite application is kept as the app source; only its browser persistence and local Connector transport are adapted to agent-home boundaries.
 

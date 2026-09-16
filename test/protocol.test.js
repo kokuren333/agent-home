@@ -16,17 +16,60 @@ before(async () => {
 after(async () => { if (child && child.exitCode === null) { const exited = new Promise((resolve) => child.once('exit', resolve)); child.kill(); await exited; } await rm(temp, { recursive: true, force: true }); });
 
 test('discovers apps from manifests, including the protocol-only demo app', async () => {
-  const { response, data } = await request('/api/apps'); assert.equal(response.status, 200); assert.deepEqual(data.map((app) => app.id).sort(), ['challenge-tree', 'character-chat', 'demo-app']);
+  const { response, data } = await request('/api/apps'); assert.equal(response.status, 200); const ids = data.map((app) => app.id);
+  for (const id of ['challenge-tree', 'character-chat', 'demo-app', 'evidence-based-slopedia']) assert.ok(ids.includes(id));
   assert.equal((await request('/api/apps/demo-app')).data.capabilities.includes('run'), true);
   assert.equal((await request('/api/apps/challenge-tree')).data.capabilities.includes('storage'), true);
+  assert.equal((await request('/api/apps/evidence-based-slopedia')).data.capabilities.includes('resources'), true);
   assert.equal((await fetch(base + '/ui/styles.css')).status, 200);
 });
 
+test('persists launcher app order without changing the app manifests', async () => {
+  const initial = await request('/api/apps');
+  const initialIds = initial.data.map((app) => app.id);
+  const reversed = [...initialIds].reverse();
+  const saved = await request('/api/apps/order', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ appIds: reversed }) });
+  assert.equal(saved.response.status, 200);
+  assert.deepEqual((await request('/api/apps')).data.map((app) => app.id), reversed);
+  assert.deepEqual((await request('/api/apps/order')).data.appIds, reversed);
+  const invalid = await request('/api/apps/order', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ appIds: [reversed[0]] }) });
+  assert.equal(invalid.response.status, 400);
+  await request('/api/apps/order', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ appIds: initialIds }) });
+});
+
+test('persists launcher app visibility separately from app manifests', async () => {
+  const apps = await request('/api/apps?includeHidden=true');
+  const ids = apps.data.map((app) => app.id);
+  const hidden = [ids[0]];
+  const saved = await request('/api/apps/visibility', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ hiddenAppIds: hidden }) });
+  assert.equal(saved.response.status, 200);
+  assert.deepEqual((await request('/api/apps/visibility')).data.hiddenAppIds, hidden);
+  assert.equal((await request('/api/apps')).data.some((app) => app.id === ids[0]), false);
+  assert.equal((await request('/api/apps?includeHidden=true')).data.find((app) => app.id === ids[0]).hidden, true);
+  await request('/api/apps/visibility', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ hiddenAppIds: [] }) });
+});
+
 test('demo app uses generic run and event protocol', async () => {
-  const created = await request('/api/apps/demo-app/runs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'test' }) });
+  const created = await request('/api/apps/demo-app/runs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: '短い説明を書いて' }) });
   assert.equal(created.response.status, 202); const runId = created.data.id;
   for (let i = 0; i < 30; i++) { const result = await request(`/api/runs/${runId}`); if (result.data.status === 'completed') break; await new Promise((resolve) => setTimeout(resolve, 20)); }
-  const events = await request(`/api/runs/${runId}/events`); assert.ok(events.data.some((event) => event.type === 'message.delta')); assert.ok(events.data.some((event) => event.type === 'run.completed'));
+  const events = await request(`/api/runs/${runId}/events`); assert.ok(events.data.some((event) => event.type === 'message.delta')); assert.ok(events.data.some((event) => event.type === 'message.completed')); assert.ok(events.data.some((event) => event.type === 'result.completed')); assert.ok(events.data.some((event) => event.type === 'run.completed'));
+  const messages = await request('/api/apps/demo-app/resources/messages'); assert.equal(messages.data.messages.at(-1).role, 'assistant');
+  await request('/api/apps/demo-app/resources/messages', { method: 'DELETE' });
+});
+
+test('evidence-based-slopedia exposes the simple query/news queue through the generic protocol', async () => {
+  const manifest = await request('/api/apps/evidence-based-slopedia');
+  assert.equal(manifest.response.status, 200);
+  assert.equal((await fetch(base + manifest.data.entry)).status, 200);
+  const body = JSON.stringify({ action: 'enqueue_daily_news', date: '2026-09-16' });
+  const created = await request('/api/apps/evidence-based-slopedia/runs', { method: 'POST', headers: { 'content-type': 'application/json' }, body });
+  assert.equal(created.response.status, 202);
+  for (let i = 0; i < 30; i++) { const result = await request(`/api/runs/${created.data.id}`); if (result.data.status === 'completed') break; await new Promise((resolve) => setTimeout(resolve, 20)); }
+  const state = await request('/api/apps/evidence-based-slopedia/resources/daily_news_state?date=2026-09-16');
+  assert.equal(state.response.status, 200);
+  assert.equal(state.data.activeCount, 10);
+  assert.equal((await request('/api/apps/evidence-based-slopedia/resources/jobs?activeOnly=true')).data.jobs.length, 10);
 });
 
 test('challenge tree uses app-owned workspaces and generic runs', async () => {
