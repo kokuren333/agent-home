@@ -71,7 +71,7 @@
     }
     list.innerHTML = jobs.map((job) => `<li class="job-item">
       <div class="job-main"><span class="job-type">${job.jobType === 'daily_news' ? 'NEWS' : 'ARTICLE'}</span><strong>${escapeHtml(jobTitle(job))}</strong></div>
-      <div class="job-meta"><span class="job-status status-${escapeHtml(job.status)} phase-${escapeHtml(job.phase || '')}">${escapeHtml(statusLabel(job.status, job.phase))}</span><time datetime="${escapeHtml(job.createdAt || '')}">投入 ${escapeHtml(formatCreatedAt(job.createdAt))}</time>${escapeHtml(activityLabel(job))}${job.status === 'failed' ? `<button class="job-retry" type="button" data-job-id="${escapeHtml(job.id)}" data-job-action="retry">再試行</button><button class="job-restart" type="button" data-job-id="${escapeHtml(job.id)}" data-job-action="restart">最初から</button>` : ''}<button class="job-delete" type="button" data-job-id="${escapeHtml(job.id)}"${job.status === 'queued' || job.status === 'failed' ? '' : ' disabled title="処理中のジョブは削除できません"'}>削除</button></div>
+      <div class="job-meta"><span class="job-status status-${escapeHtml(job.status)} phase-${escapeHtml(job.phase || '')}">${escapeHtml(statusLabel(job.status, job.phase))}</span><time datetime="${escapeHtml(job.createdAt || '')}">投入 ${escapeHtml(formatCreatedAt(job.createdAt))}</time>${escapeHtml(activityLabel(job))}${job.status === 'failed' ? `<button class="job-restart" type="button" data-job-id="${escapeHtml(job.id)}" data-job-action="restart">最初から</button>` : ''}<button class="job-delete" type="button" data-job-id="${escapeHtml(job.id)}"${job.status === 'queued' || job.status === 'failed' ? '' : ' disabled title="処理中のジョブは削除できません"'}>削除</button></div>
     </li>`).join('');
   }
 
@@ -177,6 +177,21 @@
     }
   }
 
+  async function clearQueue() {
+    if (!window.confirm('待機中のジョブをすべてキューから削除しますか？処理中のジョブは停止しません。')) return;
+    const button = $('#clear-queue');
+    if (button) button.disabled = true;
+    try {
+      const result = await api.request('jobs/clear-queue', { method: 'POST' });
+      showMessage(`${result.deletedCount || 0}件の待機中ジョブをキューから削除しました。`);
+      await loadJobs();
+    } catch (error) {
+      showMessage(`キューをクリアできません：${error.message}`);
+    } finally {
+      if (button) button.disabled = false;
+    }
+  }
+
   $('#news-button')?.addEventListener('click', enqueueNews);
   $('#query-form')?.addEventListener('submit', enqueueArticle);
   $('#jobs')?.addEventListener('click', async (event) => {
@@ -184,11 +199,11 @@
     if (actionButton) {
       const id = actionButton.dataset.jobId;
       const action = actionButton.dataset.jobAction;
-      if (!id || !action || !window.confirm(action === 'restart' ? 'このジョブを最初からやり直しますか？' : 'このジョブを再試行しますか？')) return;
+      if (!id || action !== 'restart' || !window.confirm('このジョブを最初からやり直しますか？')) return;
       actionButton.disabled = true;
       try {
         await api.request(`jobs/${id}/${action}`, { method: 'POST' });
-        showMessage(action === 'restart' ? 'ジョブを最初から再実行します。' : 'ジョブを再試行します。');
+        showMessage('ジョブを最初から再実行します。');
         await loadJobs();
       } catch (error) { showMessage(`ジョブを再実行できません：${error.message}`); actionButton.disabled = false; }
       return;
@@ -207,6 +222,7 @@
       button.disabled = false;
     }
   });
+  $('#clear-queue')?.addEventListener('click', clearQueue);
   $('#portal-search')?.addEventListener('submit', (event) => {
     event.preventDefault();
     const value = $('#portal-search-input')?.value.trim();

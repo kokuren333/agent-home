@@ -18,7 +18,6 @@ const NEWS_FIELDS = [
 const ACTIVE = ['queued', 'running', 'waiting_publish', 'publishing'];
 const GENERATED = ['completed', 'published', 'succeeded'];
 const DEFAULT_WORKER_CONCURRENCY = 3;
-const MAX_RETRIES = 2;
 const iso = () => new Date().toISOString();
 
 function publicJob(row) {
@@ -88,7 +87,7 @@ export function createApp({ db, root, imageGenerator } = {}) {
   ]) {
     try { db.exec(statement); } catch (error) { if (!/duplicate column name/i.test(String(error.message))) throw error; }
   }
-  const recovered = db.prepare("UPDATE ebs_jobs SET status='failed', phase='failed', error='Gateway再起動前に処理が中断されました。再試行してください。', updated_at=? WHERE status IN ('running', 'waiting_publish', 'publishing')").run(iso());
+  const recovered = db.prepare("UPDATE ebs_jobs SET status='failed', phase='failed', error='Gateway再起動前に処理が中断されました。最初からやり直してください。', updated_at=? WHERE status IN ('running', 'waiting_publish', 'publishing')").run(iso());
 
   const rowsForDate = (date) => db.prepare(
     'SELECT * FROM ebs_jobs WHERE job_type=? AND daily_date=? ORDER BY created_at ASC',
@@ -342,10 +341,8 @@ Publish Gateを満たす場合だけ最終記事を所定の公開ディレク�
         try { await processJob(row, backendForWorker, generator); }
         catch (error) {
           const message = retryableError(error);
-          const latest = db.prepare('SELECT attempt_count FROM ebs_jobs WHERE id=?').get(row.id);
           cleanupFailedAttempt(row);
-          if ((latest?.attempt_count || 0) <= MAX_RETRIES) updateJob(row.id, 'queued', 'retrying', message);
-          else updateJob(row.id, 'failed', 'failed', message);
+          updateJob(row.id, 'failed', 'failed', message);
         }
       }
     })();
@@ -415,13 +412,17 @@ Publish Gateを満たす場合だけ最終記事を所定の公開ディレク�
       db.prepare('DELETE FROM ebs_jobs WHERE id=?').run(id);
       return { status: 200, data: { deleted: true, id } };
     }
-    if (name === 'jobs' && parts.length === 3 && method === 'POST' && ['retry', 'restart'].includes(parts[2])) {
+    if (name === 'jobs' && parts.length === 2 && parts[1] === 'clear-queue' && method === 'POST') {
+      const result = db.prepare("DELETE FROM ebs_jobs WHERE status='queued'").run();
+      return { status: 200, data: { deletedCount: result.changes } };
+    }
+    if (name === 'jobs' && parts.length === 3 && method === 'POST' && parts[2] === 'restart') {
       const id = parts[1];
       const job = db.prepare('SELECT * FROM ebs_jobs WHERE id=?').get(id);
       if (!job) return { status: 404, data: { error: { code: 'job_not_found', message: 'ジョブが見つかりません。' } } };
-      if (job.status !== 'failed') return { status: 409, data: { error: { code: 'job_not_retryable', message: '失敗済みのジョブだけ再試行できます。' } } };
-      if (parts[2] === 'restart') cleanupFailedAttempt(job, { force: true });
-      db.prepare("UPDATE ebs_jobs SET status='queued', phase='retrying', error='', attempt_count=0, updated_at=?, heartbeat_at=? WHERE id=?").run(iso(), iso(), id);
+      if (job.status !== 'failed') return { status: 409, data: { error: { code: 'job_not_restartable', message: '失敗済みのジョブだけ最初からやり直せます。' } } };
+      cleanupFailedAttempt(job, { force: true });
+      db.prepare("UPDATE ebs_jobs SET status='queued', phase='restart_queued', error='', attempt_count=0, updated_at=?, heartbeat_at=? WHERE id=?").run(iso(), iso(), id);
       const next = publicJob(db.prepare('SELECT * FROM ebs_jobs WHERE id=?').get(id));
       return { status: 202, data: { queued: true, mode: parts[2], job: next } };
     }

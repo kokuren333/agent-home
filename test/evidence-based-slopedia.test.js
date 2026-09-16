@@ -46,6 +46,8 @@ test('EBS UI has only the launcher return, article query, news, and queue contro
   assert.match(joined, /Launcherへ戻る/);
   assert.match(joined, /今日のニュースを生成/);
   assert.match(joined, /記事Queryを送信/);
+  assert.match(joined, /今のキューをクリア/);
+  assert.doesNotMatch(joined, /再試行/);
   assert.match(joined, /投入/);
   assert.match(joined, /削除/);
   assert.match(joined, /archive\.html\?kind=articles/);
@@ -82,6 +84,24 @@ test('EBS queue deletion is limited to queued or failed jobs', async () => {
     db.prepare("UPDATE ebs_jobs SET status='running', phase='source_discovery' WHERE id=?").run(running.job.id);
     const refused = app.resources({ method: 'DELETE', path: `/jobs/${running.job.id}`, query: new URLSearchParams() });
     assert.equal(refused.status, 409);
+  } finally {
+    db.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('EBS queue clear removes only waiting jobs', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'agent-home-ebs-clear-'));
+  const db = new DatabaseSync(path.join(root, 'test.db'));
+  try {
+    const app = createApp({ db, root });
+    const first = await app.run({ action: 'enqueue_article', query: 'キュークリア1' });
+    const second = await app.run({ action: 'enqueue_article', query: 'キュークリア2' });
+    db.prepare("UPDATE ebs_jobs SET status='running', phase='source_discovery' WHERE id=?").run(second.job.id);
+    const cleared = app.resources({ method: 'POST', path: '/jobs/clear-queue', query: new URLSearchParams() });
+    assert.equal(cleared.data.deletedCount, 1);
+    assert.equal(app.resources({ method: 'GET', path: '/jobs', query: new URLSearchParams() }).data.jobs.some((job) => job.id === first.job.id), false);
+    assert.equal(app.resources({ method: 'GET', path: '/jobs', query: new URLSearchParams() }).data.jobs.some((job) => job.id === second.job.id), true);
   } finally {
     db.close();
     await rm(root, { recursive: true, force: true });
