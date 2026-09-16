@@ -108,12 +108,15 @@ h1 { max-width: 720px; margin-bottom: 1.2rem; font-size: clamp(2.4rem, 7vw, 5.1r
 .job-main strong { overflow-wrap: anywhere; font-size: .88rem; line-height: 1.4; }
 .job-type { flex: 0 0 auto; color: var(--accent); font: 700 .64rem ui-sans-serif, sans-serif; letter-spacing: .08em; }
 .job-meta { display: flex; align-items: center; gap: .65rem; margin-top: .35rem; color: var(--muted); font: .71rem ui-sans-serif, sans-serif; }
+.job-meta time { white-space: nowrap; }
 .job-status { color: var(--accent); }
 .status-queued { color: var(--muted); }
 .status-failed { color: #a33b2d; }
 .empty-job { padding: 1.3rem 0; color: var(--muted); font-size: .86rem; }
 .job-delete { margin-left: auto; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: var(--muted); padding: 0; font: .68rem ui-sans-serif, sans-serif; }
 .job-delete:hover { border-bottom-color: #a33b2d; color: #a33b2d; }
+.job-retry, .job-restart { border: 0; border-bottom: 1px solid var(--line); background: transparent; color: var(--accent); padding: 0; font: .68rem ui-sans-serif, sans-serif; }
+.job-retry:hover, .job-restart:hover { border-bottom-color: var(--accent); }
 .archive-page { max-width: var(--max-width); margin: auto; padding: 4.5rem 1rem 6rem; }
 .archive-heading { border-bottom: 3px solid var(--ink); padding-bottom: 2.2rem; }
 .archive-heading h1 { margin: 0; font-size: clamp(2.5rem, 7vw, 5rem); }

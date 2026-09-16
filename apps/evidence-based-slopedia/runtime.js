@@ -34,6 +34,7 @@ function publicJob(row) {
     newsField: row.news_field || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    heartbeatAt: row.heartbeat_at || null,
   };
 }
 
@@ -73,7 +74,8 @@ export function createApp({ db, root, imageGenerator } = {}) {
       error TEXT NOT NULL DEFAULT '',
       attempt_count INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
+      updated_at TEXT NOT NULL,
+      heartbeat_at TEXT NOT NULL DEFAULT ''
     );
     CREATE INDEX IF NOT EXISTS ebs_jobs_daily_idx ON ebs_jobs(job_type, daily_date, status);
     CREATE INDEX IF NOT EXISTS ebs_jobs_updated_idx ON ebs_jobs(updated_at DESC);
@@ -82,9 +84,11 @@ export function createApp({ db, root, imageGenerator } = {}) {
     "ALTER TABLE ebs_jobs ADD COLUMN phase TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE ebs_jobs ADD COLUMN error TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE ebs_jobs ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE ebs_jobs ADD COLUMN heartbeat_at TEXT NOT NULL DEFAULT ''",
   ]) {
     try { db.exec(statement); } catch (error) { if (!/duplicate column name/i.test(String(error.message))) throw error; }
   }
+  const recovered = db.prepare("UPDATE ebs_jobs SET status='failed', phase='failed', error='Gateway再起動前に処理が中断されました。再試行してください。', updated_at=? WHERE status IN ('running', 'waiting_publish', 'publishing')").run(iso());
 
   const rowsForDate = (date) => db.prepare(
     'SELECT * FROM ebs_jobs WHERE job_type=? AND daily_date=? ORDER BY created_at ASC',
@@ -112,9 +116,9 @@ export function createApp({ db, root, imageGenerator } = {}) {
     const now = iso();
     const id = randomUUID();
     db.prepare(`INSERT INTO ebs_jobs
-      (id, job_type, query, mode, status, daily_date, news_field, payload_json, phase, error, created_at, updated_at)
-      VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, '', '', ?, ?)`).run(
-      id, jobType, query, mode, dailyDate, newsField, JSON.stringify(payload), now, now,
+      (id, job_type, query, mode, status, daily_date, news_field, payload_json, phase, error, created_at, updated_at, heartbeat_at)
+      VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, '', '', ?, ?, ?)`).run(
+      id, jobType, query, mode, dailyDate, newsField, JSON.stringify(payload), now, now, now,
     );
     return publicJob(db.prepare('SELECT * FROM ebs_jobs WHERE id=?').get(id));
   }
@@ -179,7 +183,7 @@ export function createApp({ db, root, imageGenerator } = {}) {
       return {
         date,
         title: frontmatterValue(body, 'title') || fileName.replace(/\.md$/i, ''),
-        field: frontmatterValue(body, 'field'),
+        field: frontmatterValue(body, 'field') || frontmatterValue(body, 'category_id').replace(/^\d+_/, ''),
         path: pathModule.relative(contentRoot, file).replace(/\\/g, '/'),
         imagePath: frontmatterValue(body, 'infographic_path'),
       };
@@ -194,7 +198,12 @@ export function createApp({ db, root, imageGenerator } = {}) {
 
   function updateJob(id, status, phase, error = '') {
     const now = iso();
-    db.prepare('UPDATE ebs_jobs SET status=?, phase=?, error=?, updated_at=? WHERE id=?').run(status, phase || '', error || '', now, id);
+    db.prepare('UPDATE ebs_jobs SET status=?, phase=?, error=?, updated_at=?, heartbeat_at=? WHERE id=?').run(status, phase || '', error || '', now, now, id);
+  }
+
+  function touchJob(id) {
+    const now = iso();
+    db.prepare('UPDATE ebs_jobs SET heartbeat_at=?, updated_at=? WHERE id=? AND status IN (?, ?, ?, ?)').run(now, now, id, ...ACTIVE);
   }
 
   function workflowPrompt(job, researchPath) {
@@ -260,29 +269,34 @@ Publish Gateを満たす場合だけ最終記事を所定の公開ディレク�
     const infographicPath = job.job_type === 'daily_news' ? pathModule.join('50_Assets', 'Infographics', 'Daily', outputName) : pathModule.join('50_Assets', 'Infographics', outputName);
     const copiedPath = pathModule.join(contentRoot, infographicPath);
     fs.mkdirSync(workDir, { recursive: true });
+    const heartbeat = setInterval(() => touchJob(job.id), 15_000);
     const articleRoot = pathModule.join(contentRoot, job.job_type === 'daily_news' ? '11_Daily' : '10_Published');
-    const beforeFiles = new Set(walkFiles(articleRoot, (file) => file.toLowerCase().endsWith('.md')));
-    updateJob(job.id, 'running', 'source_discovery');
-    await backendForWorker.run(workflowPrompt(job, researchPath), { cwd: contentRoot, webSearch: true, write: true });
-    if (!fs.existsSync(researchPath)) throw new Error('EBS worker did not create the required research record.');
-    updateJob(job.id, 'running', 'image_generation');
-    const brief = fs.readFileSync(researchPath, 'utf8').slice(0, 30000);
-    await generator.generate(brief, { outputPath: generatedPath, purpose: 'infographic' });
-    const image = pngInfo(generatedPath);
-    if (!image || image.bytes === 0) throw new Error('imagegen did not create a valid PNG.');
-    if (Math.abs(image.width / image.height - 16 / 9) > 0.12) throw new Error(`imagegen output is not 16:9 (${image.width}x${image.height}).`);
-    fs.mkdirSync(pathModule.dirname(copiedPath), { recursive: true });
-    fs.copyFileSync(generatedPath, copiedPath);
-    const logPath = pathModule.join(contentRoot, '70_Logs', 'infographic_logs', `${job.id}.json`);
-    fs.mkdirSync(pathModule.dirname(logPath), { recursive: true });
-    fs.writeFileSync(logPath, JSON.stringify({ jobId: job.id, sourcePath: generatedPath, copiedPath, width: image.width, height: image.height, bytes: image.bytes, format: 'PNG', readability: 'worker visual verification required' }, null, 2));
-    updateJob(job.id, 'running', 'publishing');
-    await backendForWorker.run(finalPrompt(job, researchPath, infographicPath), { cwd: contentRoot, webSearch: true, write: true });
-    const candidates = outputCandidates(job, startedAt, beforeFiles);
-    if (candidates.length !== 1) throw new Error(`EBS worker expected one new published article, found ${candidates.length}.`);
-    ensureInfographicFrontmatter(candidates[0]);
-    validatePublishedFile(candidates[0], job, infographicPath);
-    updateJob(job.id, 'completed', 'published');
+    try {
+      const beforeFiles = new Set(walkFiles(articleRoot, (file) => file.toLowerCase().endsWith('.md')));
+      updateJob(job.id, 'running', 'source_discovery');
+      await backendForWorker.run(workflowPrompt(job, researchPath), { cwd: contentRoot, webSearch: true, write: true });
+      if (!fs.existsSync(researchPath)) throw new Error('EBS worker did not create the required research record.');
+      updateJob(job.id, 'running', 'image_generation');
+      const brief = fs.readFileSync(researchPath, 'utf8').slice(0, 30000);
+      await generator.generate(brief, { outputPath: generatedPath, purpose: 'infographic' });
+      const image = pngInfo(generatedPath);
+      if (!image || image.bytes === 0) throw new Error('imagegen did not create a valid PNG.');
+      if (Math.abs(image.width / image.height - 16 / 9) > 0.12) throw new Error(`imagegen output is not 16:9 (${image.width}x${image.height}).`);
+      fs.mkdirSync(pathModule.dirname(copiedPath), { recursive: true });
+      fs.copyFileSync(generatedPath, copiedPath);
+      const logPath = pathModule.join(contentRoot, '70_Logs', 'infographic_logs', `${job.id}.json`);
+      fs.mkdirSync(pathModule.dirname(logPath), { recursive: true });
+      fs.writeFileSync(logPath, JSON.stringify({ jobId: job.id, sourcePath: generatedPath, copiedPath, width: image.width, height: image.height, bytes: image.bytes, format: 'PNG', readability: 'worker visual verification required' }, null, 2));
+      updateJob(job.id, 'running', 'publishing');
+      await backendForWorker.run(finalPrompt(job, researchPath, infographicPath), { cwd: contentRoot, webSearch: true, write: true });
+      const candidates = outputCandidates(job, startedAt, beforeFiles);
+      if (candidates.length !== 1) throw new Error(`EBS worker expected one new published article, found ${candidates.length}.`);
+      ensureInfographicFrontmatter(candidates[0]);
+      validatePublishedFile(candidates[0], job, infographicPath);
+      updateJob(job.id, 'completed', 'published');
+    } finally {
+      clearInterval(heartbeat);
+    }
   }
 
   let workerPromise = null;
@@ -302,9 +316,9 @@ Publish Gateを満たす場合だけ最終記事を所定の公開ディレク�
   function retryableError(error) {
     return error instanceof Error ? error.message : String(error);
   }
-  function cleanupFailedAttempt(job) {
+  function cleanupFailedAttempt(job, { force = false } = {}) {
     const startedAt = Date.parse(job.updated_at || '') || 0;
-    const recent = (file) => fs.existsSync(file) && (!startedAt || fs.statSync(file).mtimeMs >= startedAt - 2000);
+    const recent = (file) => fs.existsSync(file) && (force || !startedAt || fs.statSync(file).mtimeMs >= startedAt - 2000);
     const workDir = pathModule.join(contentRoot, '_working', 'ebs-jobs', job.id);
     const generatedName = job.job_type === 'daily_news' ? `${job.daily_date}_${job.news_field}.png` : `${job.id}.png`;
     const generatedPath = pathModule.join(root || process.cwd(), 'data', 'ebs-imagegen', job.id, generatedName);
@@ -400,6 +414,16 @@ Publish Gateを満たす場合だけ最終記事を所定の公開ディレク�
       if (job.status !== 'queued' && job.status !== 'failed') return { status: 409, data: { error: { code: 'job_not_deletable', message: '処理中または完了済みのジョブは削除できません。' } } };
       db.prepare('DELETE FROM ebs_jobs WHERE id=?').run(id);
       return { status: 200, data: { deleted: true, id } };
+    }
+    if (name === 'jobs' && parts.length === 3 && method === 'POST' && ['retry', 'restart'].includes(parts[2])) {
+      const id = parts[1];
+      const job = db.prepare('SELECT * FROM ebs_jobs WHERE id=?').get(id);
+      if (!job) return { status: 404, data: { error: { code: 'job_not_found', message: 'ジョブが見つかりません。' } } };
+      if (job.status !== 'failed') return { status: 409, data: { error: { code: 'job_not_retryable', message: '失敗済みのジョブだけ再試行できます。' } } };
+      if (parts[2] === 'restart') cleanupFailedAttempt(job, { force: true });
+      db.prepare("UPDATE ebs_jobs SET status='queued', phase='retrying', error='', attempt_count=0, updated_at=?, heartbeat_at=? WHERE id=?").run(iso(), iso(), id);
+      const next = publicJob(db.prepare('SELECT * FROM ebs_jobs WHERE id=?').get(id));
+      return { status: 202, data: { queued: true, mode: parts[2], job: next } };
     }
     if (name === 'search' && method === 'GET') {
       const value = String(query?.get('q') || '').trim();

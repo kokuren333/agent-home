@@ -28,6 +28,15 @@
     }).format(date);
   }
 
+  function activityLabel(job) {
+    if (!['queued', 'running', 'waiting_publish', 'publishing'].includes(job.status)) return '';
+    const value = job.heartbeatAt || job.updatedAt;
+    if (!value) return '動作確認時刻不明';
+    const elapsed = Date.now() - new Date(value).getTime();
+    const when = formatCreatedAt(value);
+    return elapsed > 90_000 ? `最終確認 ${when}（90秒以上更新なし）` : `最終確認 ${when}`;
+  }
+
   function today() {
     const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
     return Object.fromEntries(parts.filter(({ type }) => type !== 'literal').map(({ type, value }) => [type, value]));
@@ -62,7 +71,7 @@
     }
     list.innerHTML = jobs.map((job) => `<li class="job-item">
       <div class="job-main"><span class="job-type">${job.jobType === 'daily_news' ? 'NEWS' : 'ARTICLE'}</span><strong>${escapeHtml(jobTitle(job))}</strong></div>
-      <div class="job-meta"><span class="job-status status-${escapeHtml(job.status)} phase-${escapeHtml(job.phase || '')}">${escapeHtml(statusLabel(job.status, job.phase))}</span><time datetime="${escapeHtml(job.createdAt || '')}">投入 ${escapeHtml(formatCreatedAt(job.createdAt))}</time><button class="job-delete" type="button" data-job-id="${escapeHtml(job.id)}"${job.status === 'queued' || job.status === 'failed' ? '' : ' disabled title="処理中のジョブは削除できません"'}>削除</button></div>
+      <div class="job-meta"><span class="job-status status-${escapeHtml(job.status)} phase-${escapeHtml(job.phase || '')}">${escapeHtml(statusLabel(job.status, job.phase))}</span><time datetime="${escapeHtml(job.createdAt || '')}">投入 ${escapeHtml(formatCreatedAt(job.createdAt))}</time>${escapeHtml(activityLabel(job))}${job.status === 'failed' ? `<button class="job-retry" type="button" data-job-id="${escapeHtml(job.id)}" data-job-action="retry">再試行</button><button class="job-restart" type="button" data-job-id="${escapeHtml(job.id)}" data-job-action="restart">最初から</button>` : ''}<button class="job-delete" type="button" data-job-id="${escapeHtml(job.id)}"${job.status === 'queued' || job.status === 'failed' ? '' : ' disabled title="処理中のジョブは削除できません"'}>削除</button></div>
     </li>`).join('');
   }
 
@@ -116,8 +125,8 @@
 
   async function loadJobs() {
     try {
-      const [jobData, newsState, workerState] = await Promise.all([api.read('jobs', { limit: 50, activeOnly: true }), api.read('daily_news_state', { date: todayString() }), api.read('worker_status').catch(() => ({ connected: false, message: 'Worker状態を取得できません。Gatewayを再起動してください。' }))]);
-      renderJobs(jobData.jobs || []);
+      const [jobData, newsState, workerState] = await Promise.all([api.read('jobs', { limit: 50 }), api.read('daily_news_state', { date: todayString() }), api.read('worker_status').catch(() => ({ connected: false, message: 'Worker状態を取得できません。Gatewayを再起動してください。' }))]);
+      renderJobs((jobData.jobs || []).filter((job) => ['queued', 'running', 'waiting_publish', 'publishing', 'failed'].includes(job.status)));
       renderNews(newsState);
       renderWorkerStatus(workerState);
     } catch (error) {
@@ -171,6 +180,19 @@
   $('#news-button')?.addEventListener('click', enqueueNews);
   $('#query-form')?.addEventListener('submit', enqueueArticle);
   $('#jobs')?.addEventListener('click', async (event) => {
+    const actionButton = event.target.closest('[data-job-action]');
+    if (actionButton) {
+      const id = actionButton.dataset.jobId;
+      const action = actionButton.dataset.jobAction;
+      if (!id || !action || !window.confirm(action === 'restart' ? 'このジョブを最初からやり直しますか？' : 'このジョブを再試行しますか？')) return;
+      actionButton.disabled = true;
+      try {
+        await api.request(`jobs/${id}/${action}`, { method: 'POST' });
+        showMessage(action === 'restart' ? 'ジョブを最初から再実行します。' : 'ジョブを再試行します。');
+        await loadJobs();
+      } catch (error) { showMessage(`ジョブを再実行できません：${error.message}`); actionButton.disabled = false; }
+      return;
+    }
     const button = event.target.closest('.job-delete');
     if (!button) return;
     const id = button.dataset.jobId;

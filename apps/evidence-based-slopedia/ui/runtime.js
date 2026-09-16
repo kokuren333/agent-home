@@ -25,5 +25,8 @@
   async function remove(name, id) {
     return parse(await fetch(`${base}/resources/${encodeURIComponent(name)}/${encodeURIComponent(id)}`, { method: 'DELETE' }));
   }
-  globalThis.evidenceBasedSlopedia = { run, read, remove };
+  async function request(path, options = {}) {
+    return parse(await fetch(`${base}/resources/${path}`, { ...options, headers: { 'content-type': 'application/json', ...(options.headers || {}) } }));
+  }
+  globalThis.evidenceBasedSlopedia = { run, read, remove, request };
 })();
