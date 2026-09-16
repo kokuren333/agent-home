@@ -1,5 +1,5 @@
-import type { Settings, Workspace } from './types'
-import { createSampleWorkspace } from './sample'
+import type { Settings, Workspace } from '../src/types'
+import { createSampleWorkspace } from '../src/sample'
 
 /**
  * Challenge Tree keeps its rich workspace model, but persistence is owned by

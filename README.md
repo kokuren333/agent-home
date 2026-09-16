@@ -54,7 +54,7 @@ npm test
 
 新しいアプリは `apps/<id>/manifest.json` と `runtime.js`、UI entryを追加してGatewayを再起動するだけでLauncherに表示されます。ChallengeTreeもこの方式で登録されています。
 
-ChallengeTreeは元リポジトリのReact/Viteソース、Zodスキーマ、学習コア、画面・多言語リソースを `apps/challenge-tree/src/` に保持しています。元のConnector通信は `src/gateway.ts`、IndexedDB永続化は `src/db.ts` に置き換え、学習データはGateway配下のアプリ専用SQLite領域へ保存します。変更後は `npm run build:challenge-tree`（または `npm run build`）で `dist/` を更新してください。
+ChallengeTreeは元リポジトリのReact/Viteソース、Zodスキーマ、学習コア、画面・多言語リソースを `apps/challenge-tree/src/` に保持しています。元のConnector通信は標準Adapterの `apps/challenge-tree/adapter/gateway-client.ts`、IndexedDB永続化は `apps/challenge-tree/adapter/storage.ts` に置き換え、学習データはGateway配下のアプリ専用SQLite領域へ保存します。変更後は `npm run build:challenge-tree`（または `npm run build`）で `dist/` を更新してください。
 
 ## キャラクターアイコン生成
 

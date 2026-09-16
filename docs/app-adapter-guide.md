@@ -42,10 +42,11 @@ app has those concerns. A static app may contain only `manifest.json`, `ui/`,
 and optionally `runtime.js`.
 
 For a port where the upstream repository already has a strong source layout,
-keep that layout. Put the adapter next to the relevant boundary if moving files
-would make upstream updates or tests harder. Challenge Tree uses this exception:
-its upstream `src/` is preserved, with `src/gateway.ts` and `src/db.ts` acting
-as its adapters.
+keep the domain and UI source, but place all agent-home boundary replacements in
+the standard `adapter/` directory. This keeps upstream updates and tests easy to
+compare while making every integrated app follow the same layout. Challenge
+Tree follows this rule with `adapter/gateway-client.ts` and
+`adapter/storage.ts`.
 
 ## Boundary mapping
 
@@ -134,4 +135,3 @@ protocol behavior and a conformance test are defined.
 - [ ] A mock run works without external credentials.
 - [ ] Codex run errors expose the actual validation or backend cause.
 - [ ] The app works from its manifest entry URL through Tailscale.
-

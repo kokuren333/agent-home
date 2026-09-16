@@ -28,7 +28,7 @@ apps/*/manifest.json + runtime.js + app UI source/build
 - `gateway/`: one Node process. It discovers app manifests, owns common runs/events, provides SQLite, and delegates app resources/runs to a runtime. It does not know Character Chat fields.
 - `packages/app-protocol/`: protocol version, shared concepts, and error shape.
 - `packages/app-sdk/`: tiny helper for future app authors.
-- `apps/*/`: app-specific manifest, runtime, adapter, schema, prompts, and UI. Existing app ports may keep their upstream layout when that is safer; the boundary remains app-local.
+- `apps/*/`: app-specific manifest, runtime, adapter, schema, prompts, and UI. Upstream domain/UI source may remain recognizable, but every agent-home boundary replacement belongs under the app's standard `adapter/` directory.
 - `data/`: SQLite database and WAL files; ignored by git.
 
 ## Directory layout
@@ -66,8 +66,9 @@ An existing app is integrated by placing a thin adapter inside its own
 `apps/<id>/` directory. The adapter replaces direct Connector/LLM calls and
 device-local persistence with Gateway calls while preserving the upstream UI
 and domain behavior. New apps may use `adapter/`, `schema/`, and `prompts/`
-subdirectories; Challenge Tree keeps its upstream `src/` layout and places its
-two boundary adapters at `src/gateway.ts` and `src/db.ts`.
+subdirectories; Challenge Tree keeps its upstream domain/UI source and places
+its two boundary adapters at `adapter/gateway-client.ts` and
+`adapter/storage.ts`.
 
 The common layer is intentionally limited to the outer contract:
 
@@ -86,7 +87,7 @@ The Launcher also provides the common model settings screen at `/api/settings/ag
 - Launcher does not contain an app ID switch or Character Chat schema. It renders the manifests returned by `GET /api/apps` and links to each manifest's `entry`.
 - Gateway does not contain Character Chat routes. It dynamically discovers `apps/*/manifest.json`, delegates app resources to the matching runtime, and owns only the common run/event/settings protocol.
 - Character Chat owns its tables, resource paths, prompts, memory rules, and screen under `apps/character-chat/`.
-- Challenge Tree owns its learning domain, Zod schemas, core learning logic, React screens, and SQLite resources under `apps/challenge-tree/`. Its original IndexedDB and Connector transport are replaced by `src/db.ts` and `src/gateway.ts`; no learning-domain UI was reimplemented in Launcher or Gateway.
+- Challenge Tree owns its learning domain, Zod schemas, core learning logic, React screens, and SQLite resources under `apps/challenge-tree/`. Its original IndexedDB and Connector transport are replaced by `adapter/storage.ts` and `adapter/gateway-client.ts`; no learning-domain UI was reimplemented in Launcher or Gateway.
 - `gateway/imagegen.js` is an infrastructure adapter. It exposes an image-generation boundary to apps and keeps Codex CLI invocation out of app code; it must remain app-neutral if more image-capable apps are added.
 
 ## Resource-light operations

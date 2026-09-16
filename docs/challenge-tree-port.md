@@ -15,8 +15,8 @@ The app is built with `npm run build:challenge-tree`. The manifest points at the
 
 | Upstream dependency | agent-home replacement |
 |---|---|
-| `src/connector.ts` and local Connector server | `src/gateway.ts` calling `/api/apps/challenge-tree/runs` and the common SSE run endpoint |
-| Browser IndexedDB in `src/db.ts` | `src/db.ts` calling `/api/apps/challenge-tree/resources/*` |
+| `src/connector.ts` and local Connector server | `adapter/gateway-client.ts` calling `/api/apps/challenge-tree/runs` and the common SSE run endpoint |
+| Browser IndexedDB in `src/db.ts` | `adapter/storage.ts` calling `/api/apps/challenge-tree/resources/*` |
 | Connector model selection | Launcher-owned `/api/settings/agent`; Gateway applies it to every run |
 | Connector-owned persistence | `apps/challenge-tree/runtime.js` tables in the single Gateway SQLite database |
 

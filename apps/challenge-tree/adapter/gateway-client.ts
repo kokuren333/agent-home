@@ -1,5 +1,5 @@
-import { GradeResponseSchema, ProposalResponseSchema, ChallengeSchema, NodeCreateSchema, NodeSchema, ResourceSchema } from './schemas'
-import type { Challenge, ConnectorModel, ConnectorStatus, GradeResponse, Proposal } from './types'
+import { GradeResponseSchema, ProposalResponseSchema, ChallengeSchema, NodeCreateSchema, NodeSchema, ResourceSchema } from '../src/schemas'
+import type { Challenge, ConnectorModel, ConnectorStatus, GradeResponse, Proposal } from '../src/types'
 
 export interface ResearchEvidence {
   searchCalls: number
